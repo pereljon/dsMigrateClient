@@ -18,9 +18,10 @@ from ConfigParser import SafeConfigParser
 from SystemConfiguration import SCDynamicStoreCopyConsoleUser
 
 # CONSTANTS
-kIniFilePath = "/Users/Shared/dsMigrateClient.ini"
-kProgramPath = "/Users/Shared/dsMigrateClient.py"
-kLogPath = "/Users/Shared/dsMigrateClient.log"
+kTmpPath = "/tmp/"
+kIniFilePath = kTmpPath + "dsMigrateClient.ini"
+kProgramPath = kTmpPath + "dsMigrateClient.py"
+kLogPath = kTmpPath + "dsMigrateClient.log"
 kLaunchDaemonName = 'com.pereljon.dsMigrateClient'
 kLaunchDaemonPath = '/Library/LaunchDaemons/' + kLaunchDaemonName + '.plist'
 kLaunchDaemon = '<?xml version="1.0" encoding="UTF-8"?>\n\
@@ -50,40 +51,35 @@ def parse_arguments():
     # Parse arguments
     parser = argparse.ArgumentParser(
         description='Migrate a mobile user from once Mac OS X Directory Service to another.')
-    parser.add_argument('-a', '--ad', action='store_true',
-                        help='Active Directory.')
-    parser.add_argument('-c', dest='computer', metavar='computername',
-                        help='computer name .')
+    parser.add_argument('--ad', action='store_true',
+                        help='migrating to Active Directory.')
+    parser.add_argument('-c', dest='computer', metavar='COMPUTER_NAME',
+                        help='computer name which will be set in new directory.')
     parser.add_argument('-d', '--debug', action='store_true',
-                        help='log all debugging info to log file. Not needed if running in testing mode.')
-    parser.add_argument('--delete', action='store_true',
-                        help='delete settings files and scripts after use.')
-    parser.add_argument('-f', '--file', metavar='filename',
-                        help='read setting from file. All other options will be ignored.')
-    parser.add_argument('-i', '--interactive', action='store_true',
-                        help="run in interactive mode, asking for the users password.")
+                        help='log all debugging info to log file.')
+    parser.add_argument('-f', dest='file', metavar='filename',
+                        help='read setting from file.')
+    parser.add_argument('--interactive', action='store_true',
+                        help="run in interactive mode. Ask logged in user for password, set up launchdaemon to run in headless mode, and logout.")
     parser.add_argument('--headless', action='store_true',
-                        help='headless (daemon) mode. Wait to run until user has logged out.')
-    parser.add_argument('-l', '--ldap', action='store_true',
-                        help='LDAP (OpenDirectory).')
-    parser.add_argument('-n', '--dns', metavar='dnsserver', action='append',
-                        help='dns.')
-    parser.add_argument('-p', dest='target_password', metavar='password',
+                        help='headless (daemon) mode. Wait to run until all users are logged out.')
+    parser.add_argument('--ldap', action='store_true',
+                        help='migrating to LDAP (OpenDirectory).')
+    parser.add_argument('--dns', metavar='DNS_SERVER', action='append',
+                        help='set up manual DNS entries.')
+    parser.add_argument('-p', dest='target_password', metavar='PASSWORD',
                         help='password for target (new) domain administrator.')
-    parser.add_argument('-P', dest='source_password', metavar='password',
+    parser.add_argument('-P', dest='source_password', metavar='PASSWORD',
                         help='password for source (old) domain administrator.')
     parser.add_argument('-s', '--serial', action='store_true',
                         help='use system serial number as computer name.')
-    parser.add_argument('-t', '--testing', action='store_true',
-                        help='run in testing mode. Migration commands are logged to log file.')
-    parser.add_argument('-u', dest='target_username', metavar='username',
+#    parser.add_argument('-t', '--testing', action='store_true',
+#                        help='run in testing mode. Migration commands are logged to log file.')
+    parser.add_argument('-u', dest='target_username', metavar='USERNAME',
                         help='administrator user for target (new) domain.')
-    parser.add_argument('-U', dest='source_username', metavar='username',
+    parser.add_argument('-U', dest='source_username', metavar='USERNAME',
                         help='administrator user for source (old) domain.')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose output.')
-    parser.add_argument('-y', '--yes', action='store_true',
-                        help='continue without prompting. \
-                        Warning: do not use this unless you are 100%% sure of what you are doing.')
     parser.add_argument('target_domain', nargs='?', help='AD domain or LDAP server')
     args = parser.parse_args()
 
