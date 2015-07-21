@@ -73,8 +73,8 @@ def parse_arguments():
                         help='password for source (old) domain administrator.')
     parser.add_argument('-s', '--serial', action='store_true',
                         help='use system serial number as computer name.')
-#    parser.add_argument('-t', '--testing', action='store_true',
-#                        help='run in testing mode. Migration commands are logged to log file.')
+    parser.add_argument('-t', '--testing', action='store_true',
+                        help='run in testing mode. Migration commands are logged to log file.')
     parser.add_argument('-u', dest='target_username', metavar='USERNAME',
                         help='administrator user for target (new) domain.')
     parser.add_argument('-U', dest='source_username', metavar='USERNAME',
@@ -116,7 +116,6 @@ def parse_arguments():
         logging.info('### Running in Production Mode###')
         if gVerbose:
             print '### Running in Production Mode ###'
-
     logging.debug('Running as: %s', getpass.getuser())
 
     # Error-checking on arguments
@@ -124,17 +123,14 @@ def parse_arguments():
         logging.critical('Either specify headless or interactive mode.')
         print 'Either specify headless or interactive mode.'
         sys.exit(1)
-    if args.file is None:
-        # Settings file NOT specified
-        if args.target_domain is None:
-            # Did NOT specify a domain or settings file
-            logging.critical('Either specify a domain or a settings file.')
-            print 'Either specify a domain or a settings file.'
-            sys.exit(1)
-        if (args.ad and args.ldap) or (not args.ad and not args.ldap):
-            print 'Error: Select either AD or LDAP for migration'
-            sys.exit(1)
-
+    if args.target_domain is None:
+        # Did NOT specify a domain
+        logging.critical('Target domain must be specified.')
+        print 'Target domain must be specified.'
+        sys.exit(1)
+    if (args.ad and args.ldap) or (not args.ad and not args.ldap):
+        print 'Error: Select either AD or LDAP for migration'
+        sys.exit(1)
     return args
 
 
@@ -143,10 +139,12 @@ def load_preferences(args):
     logging.info('Loading preferences: %s', args.file)
     parser = SafeConfigParser()
     parser.read(args.file)
-    # Remove settings file
-    if args.delete:
+    if not args.debug:
+        # Remove settings file
         logging.debug('Remove settings file: %s', args.file)
         execute_command(['srm', args.file])
+        setattr(args,'file',None)
+
     # Parse sections
     for next_section in parser.sections():
         if next_section == 'general':
@@ -176,7 +174,7 @@ def load_preferences(args):
 def save_preferences(args, filename):
     # Save args to preferences
     logging.info('Saving preferences: %s', filename)
-    delattr(args,'file')
+    setattr(args,'file',None)
     parser = SafeConfigParser()
     args = vars(args)
     for next_item in args:
@@ -335,7 +333,7 @@ def remove_launchdaemon():
     execute_command(['launchctl', 'unload', kLaunchDaemonPath])
     # Remove LaunchDaemon
     # execute_command(['launchctl', 'remove', kLaunchDaemonName])
-    os.remove(kLaunchDaemonPath)
+    execute_command(['srm', kLaunchDaemonPath])
 
 
 def get_serialnumber():
@@ -775,7 +773,7 @@ def migration_headless(args):
         if not username:
             break
         logging.debug('Waiting for user to log out: %s', username)
-        time.sleep(5)
+        time.sleep(1)
 
     # Unload loginwindow so users can't log in
     logging.debug('Unload loginwindow')
@@ -809,7 +807,7 @@ def main():
             sys.exit(1)
         migration_start(args)
     # Remove script
-    if args.delete:
+    if not args.debug:
         execute_command(['srm', sys.argv[0]])
 
 
