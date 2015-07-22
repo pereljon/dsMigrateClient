@@ -2,22 +2,23 @@
 Migrates a client(user) system from one directory service to another.
 
 ## Usage
-usage: dsMigrateClient.py [-h] [--ad] [-c COMPUTER_NAME] [-d] [-f filename]<br>
-                          [--interactive] [--headless] [--ldap]<br>
+usage: dsMigrateClient.py [-h] [--ad] [-c COMPUTER_NAME] [-d] [--delete]<br>
+                          [-f filename] [--interactive] [--headless] [--ldap]<br>
                           [--dns DNS_SERVER] [-p PASSWORD] [-P PASSWORD] [-s]<br>
-                          [-u USERNAME] [-U USERNAME] [-v]<br>
-                          [target_domain]<br>
+                          [-t] [-u USERNAME] [-U USERNAME] [-v]<br>
+                          [target_domain]
 
 Migrate a mobile user from once Mac OS X Directory Service to another.
 
-positional arguments:<br>
+**positional arguments:**<br>
   target_domain     : AD domain or LDAP server
 
-optional arguments:<br>
+**optional arguments:**<br>
   -h, --help        : show this help message and exit<br>
   --ad              : migrating to Active Directory.<br>
   -c COMPUTER_NAME  : computer name which will be set in new directory.<br>
   -d, --debug       : log all debugging info to log file.<br>
+  --delete          : delete script and settings file after running.<br>
   -f filename       : read setting from file.<br>
   --interactive     : run in interactive mode. Ask logged in user for password,
                     : set up launchdaemon to run in headless mode, and logout.<br>
