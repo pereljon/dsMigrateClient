@@ -773,6 +773,7 @@ def migration_headless(args):
         migration_start(args)
     except SystemExit:
         logging.debug('System exit caught.')
+        raise
     finally:
         # Unload loginwindow so users can't log in
         logging.debug('Load loginwindow')
