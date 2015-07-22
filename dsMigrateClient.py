@@ -18,10 +18,10 @@ from ConfigParser import SafeConfigParser
 from SystemConfiguration import SCDynamicStoreCopyConsoleUser
 
 # CONSTANTS
-kTmpPath = "/tmp/"
-kIniFilePath = kTmpPath + "dsMigrateClient.ini"
-kProgramPath = kTmpPath + "dsMigrateClient.py"
-kLogPath = kTmpPath + "dsMigrateClient.log"
+kTmpPath = '/tmp/'
+kIniFilePath = kTmpPath + 'dsMigrateClient.ini'
+kProgramPath = kTmpPath + 'dsMigrateClient.py'
+kLogPath = kTmpPath + 'dsMigrateClient.log'
 kLaunchDaemonName = 'com.pereljon.dsMigrateClient'
 kLaunchDaemonPath = '/Library/LaunchDaemons/' + kLaunchDaemonName + '.plist'
 kLaunchDaemon = '<?xml version="1.0" encoding="UTF-8"?>\n\
@@ -57,10 +57,12 @@ def parse_arguments():
                         help='computer name which will be set in new directory.')
     parser.add_argument('-d', '--debug', action='store_true',
                         help='log all debugging info to log file.')
+    parser.add_argument('--delete', action='store_true',
+                        help='delete script and settings file after running.')
     parser.add_argument('-f', dest='file', metavar='filename',
                         help='read setting from file.')
     parser.add_argument('--interactive', action='store_true',
-                        help="run in interactive mode. Ask logged in user for password, set up launchdaemon to run in headless mode, and logout.")
+                        help='run in interactive mode. Ask logged in user for password, set up launchdaemon to run in headless mode, and logout.')
     parser.add_argument('--headless', action='store_true',
                         help='headless (daemon) mode. Wait to run until all users are logged out.')
     parser.add_argument('--ldap', action='store_true',
@@ -88,12 +90,11 @@ def parse_arguments():
         logging.basicConfig(filename=kLogPath, level=logging.DEBUG)
     else:
         logging.basicConfig(filename=kLogPath, level=logging.INFO)
-
+    logging.info('Logging started')
     if args.file is not None:
         if not os.path.exists(args.file):
             # Settings file not found
             logging.critical('Missing settings file at: %s', args.file)
-            print 'Missing settings file at:' + args.file
             sys.exit(1)
         # Parse the settings file
         args = load_preferences(args)
@@ -121,15 +122,13 @@ def parse_arguments():
     # Error-checking on arguments
     if args.headless and args.interactive:
         logging.critical('Either specify headless or interactive mode.')
-        print 'Either specify headless or interactive mode.'
         sys.exit(1)
     if args.target_domain is None:
         # Did NOT specify a domain
         logging.critical('Target domain must be specified.')
-        print 'Target domain must be specified.'
         sys.exit(1)
     if (args.ad and args.ldap) or (not args.ad and not args.ldap):
-        print 'Error: Select either AD or LDAP for migration'
+        logging.critical('Select either AD or LDAP for migration')
         sys.exit(1)
     return args
 
@@ -139,12 +138,6 @@ def load_preferences(args):
     logging.info('Loading preferences: %s', args.file)
     parser = SafeConfigParser()
     parser.read(args.file)
-    if not args.debug:
-        # Remove settings file
-        logging.debug('Remove settings file: %s', args.file)
-        execute_command(['srm', args.file])
-        setattr(args,'file',None)
-
     # Parse sections
     for next_section in parser.sections():
         if next_section == 'general':
@@ -156,25 +149,30 @@ def load_preferences(args):
         # Parse items
         for next_item in parser.items(next_section):
             next_name = prefix + next_item[0]
-            if next_item[1].lower() == "true":
+            if next_item[1].lower() == 'true':
                 next_value = True
-            elif next_item[1].lower() == "false":
+            elif next_item[1].lower() == 'false':
                 next_value = False
-            elif next_item[1].lower() == "none":
+            elif next_item[1].lower() == 'none':
                 next_value = None
-            elif next_name == "dns":
+            elif next_name == 'dns':
                 # Put DNS values in list
-                next_value = next_item[1].split(",")
+                next_value = next_item[1].split(',')
             else:
                 next_value = next_item[1]
             setattr(args, next_name, next_value)
+    if args.delete:
+        # Remove settings file
+        logging.debug('Remove settings file: %s', args.file)
+        execute_command(['srm', args.file])
+        setattr(args, 'file', None)
     return args
 
 
 def save_preferences(args, filename):
     # Save args to preferences
     logging.info('Saving preferences: %s', filename)
-    setattr(args,'file',None)
+    setattr(args, 'file', None)
     parser = SafeConfigParser()
     args = vars(args)
     for next_item in args:
@@ -193,7 +191,7 @@ def save_preferences(args, filename):
             parser.add_section(section)
         if isinstance(value, types.ListType):
             # Join list values with comma
-            value = ",".join(value)
+            value = ','.join(value)
         parser.set(section, item, str(value))
     afile = open(filename, 'w')
     parser.write(afile)
@@ -209,19 +207,16 @@ def execute_command(command):
     except subprocess.CalledProcessError as error:
         logging.error('Return code: %s.', error.returncode)
         logging.error('Output: %s.', error.output)
-        return error.output
     except exceptions.OSError as error:
-        logging.critical('OS Error: %s.', error)
+        logging.critical('OS Error: #%s: %s', error.errno, error.strerror)
         sys.exit(1)
-    except:
-        logging.critical('Unexpected error: %s', sys.exc_info()[0])
-        sys.exit(1)
-    return result
+    else:
+        return result
 
 
 def get_console_user():
     username = (SCDynamicStoreCopyConsoleUser(None, None, None) or [None])[0]
-    username = [username, ""][username in [u"loginwindow", None, u""]]
+    username = [username, ''][username in [u'loginwindow', None, u'']]
     return username
 
 
@@ -229,7 +224,7 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
     logging.info('Display dialog')
     # Process arguments
     if not text:
-        print 'Empty dialog text'
+        logging.critical('Empty dialog text')
         sys.exit(1)
     text = ' "' + text + '"'
     if title:
@@ -275,10 +270,8 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
     except subprocess.CalledProcessError as error:
         # User cancelled
         logging.info('User cancelled: %s', error)
-    except:
-        logging.critical('Unexpected error: %s', sys.exc_info()[0])
-        sys.exit(1)
-    return return_result
+    else:
+        return return_result
 
 
 def authorize_password(username, password, domain='.'):
@@ -290,10 +283,8 @@ def authorize_password(username, password, domain='.'):
     except subprocess.CalledProcessError as error:
         logging.debug('Authorization error: %s', error)
         return False
-    except:
-        logging.critical('Unexpected error: %s', sys.exc_info()[0])
-        sys.exit(1)
-    return True
+    else:
+        return True
 
 
 def logout():
@@ -305,10 +296,8 @@ def logout():
     except subprocess.CalledProcessError as error:
         logging.debug('Logout error: %s', error)
         return False
-    except:
-        logging.critical('Unexpected error: %s', sys.exc_info()[0])
-        sys.exit(1)
-    return True
+    else:
+        return True
 
 
 def launch_launchdaemon():
@@ -342,7 +331,7 @@ def get_serialnumber():
     result = execute_command(command)
     search_result = re.findall('\s*Serial Number \(system\): (.+)', result)
     if not search_result:
-        logging.error('Mobile users not found')
+        logging.critical('Unable to find serial number in: %s', result)
         sys.exit(1)
     return search_result[0]
 
@@ -353,7 +342,7 @@ def get_network_services():
     result = execute_command(command)
     search_result = re.findall('.*Ethernet.*|.*Wi.*Fi.*', result)
     if not search_result:
-        logging.error('Mobile users not found')
+        logging.critical('Unable to find network services in: %s', result)
         sys.exit(1)
     return search_result
 
@@ -374,7 +363,7 @@ def ds_get_nodes():
         r'\s*<key>dsAttrTypeStandard:CSPSearchPath</key>\n\s*<array>\n(?:\s*<string>.+</string>\n)+\s*</array>\n',
         result_dscl)
     if not search_path:
-        logging.error('Search Path not found')
+        logging.critical('Search Path not found')
         sys.exit(1)
     # Find array of nodes
     node_list = re.findall(r'\s*<string>(.+)</string>\n', search_path.group(0))
@@ -428,10 +417,10 @@ def ds_read_node(node, read_path, read_key):
             r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:PrimaryGroupID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
             result)
     else:
-        logging.error('Unknown key: %s', read_key)
+        logging.critical('Unknown key: %s', read_key)
         sys.exit(1)
     if not search_results:
-        logging.error('Record not found')
+        logging.critical('Record not found')
         sys.exit(1)
     return search_results.group(3), search_results.group(1)
 
@@ -520,9 +509,9 @@ def ds_remove_node(node_type, node_domain, username, password):
 def get_mobile_users(node):
     # Get mobile users from source node
     logging.info('Get mobile users: %s', node)
-    if node['type'] == "LDAP":
+    if node['type'] == 'LDAP':
         command = ['dscl', '-plist', '.', 'search', '/Users', 'OriginalNodeName', node['path']]
-    elif node['type'] == "AD":
+    elif node['type'] == 'AD':
         command = ['dscl', '-plist', '.', 'search', '/Users', 'OriginalNodeName', node['meta']]
     else:
         logging.critical('Bad node type to get mobile users: %s', node['type'])
@@ -531,7 +520,7 @@ def get_mobile_users(node):
     # Find CSPSearchPaths
     user_list = re.findall('(.+?)\s*OriginalNodeName.*', result)
     if not user_list:
-        logging.error('Mobile user not found')
+        logging.critical('Mobile user not found in %s', result)
         sys.exit(1)
     return user_list
 
@@ -611,7 +600,7 @@ def set_password(username, password, node, domain_username, domain_password):
     logging.info('Set password for %s in node %s', username, node)
 
     # Find local groups for each user
-    command = ['dscl', '-u', domain_username, '-P', domain_password, node['path'], '-passwd', "/Users/" + username,
+    command = ['dscl', '-u', domain_username, '-P', domain_password, node['path'], '-passwd', '/Users/' + username,
                password]
     execute_command(command)
     execute_command(['dscacheutil', '-flushcache'])
@@ -622,20 +611,21 @@ def migration_start(args):
 
     # Get current Directory Services node
     nodes = ds_get_nodes()
-    if len(nodes) < 2:
-        logging.error('Mobile user not found')
+    nodes_count = len(nodes)
+    if nodes_count < 2:
+        logging.critical('Unexpected number of nodes: %s', nodes_count)
         sys.exit(1)
-    elif len(nodes) > 2:
+    elif nodes_count > 2:
         if args.ad and 'AD' in nodes:
-            print 'Error: An Active Directory service already exists:', nodes['AD']
+            logging.critical('An Active Directory service already exists: %s', nodes['AD'])
         elif args.ldap and 'LDAP' in nodes:
-            print 'Error: An LDAP service already exists:', nodes['LDAP']
+            logging.critical('An LDAP service already exists: %s', nodes['LDAP'])
         sys.exit(1)
     elif (args.ad and 'AD' in nodes) or (args.ldap and 'LDAP' in nodes):
-        print 'Error: Migrating to same directory type'
+        logging.critical('Migrating to same directory type')
         sys.exit(1)
     elif (args.ad and 'LDAP' not in nodes) or (args.ldap and 'AD' not in nodes):
-        print 'Error: Bad directory type to migrate'
+        logging.critical('Bad directory type to migrate')
         sys.exit(1)
     elif args.ad:
         source_node = nodes['LDAP']
@@ -644,20 +634,20 @@ def migration_start(args):
         source_node = nodes['AD']
         target_type = 'LDAP'
     else:
-        print 'Error: Unknown error condition', nodes
+        logging.critical('Unknown error condition: %s', nodes)
         sys.exit(1)
-    if gVerbose:
-        print 'Source node:', source_node
+    # if gVerbose:
+    #     print 'Source node:', source_node
 
     # Get mobile users
     user_list = get_mobile_users(source_node)
-    if gVerbose:
-        print 'Users:', user_list
+    # if gVerbose:
+    #     print 'Users:', user_list
 
     # Verify we are running from a local account (what if we are in non-local account but sudo'ed)
     logged_user = getpass.getuser()
-    if gVerbose:
-        print 'Logged in user:', logged_user
+    # if gVerbose:
+    #     print 'Logged in user:', logged_user
     if not gTestingMode and logged_user in user_list:
         print 'This script must run from a local user account.'
 
@@ -675,22 +665,22 @@ def migration_start(args):
 
     # Read updated nodes
     nodes = ds_get_nodes()
-    if len(nodes) < 3:
-        logging.error('Failed to add new directory service')
+    nodes_count = len(nodes)
+    if nodes_count < 3:
+        logging.critical('Failed to add new directory service')
         sys.exit(1)
     elif args.ad and 'AD' not in nodes:
-        print 'Error: Active Directory service not found'
+        logging.critical('Active Directory service not found')
         sys.exit(1)
     elif args.ldap and 'LDAP' not in nodes:
-        print 'Error: LDAP service not found'
+        logging.critical('LDAP service not found')
         sys.exit(1)
     elif args.ad:
         target_node = nodes['AD']
     elif args.ldap:
         target_node = nodes['LDAP']
     else:
-        print 'Bad condition getting target node'
-        logging.error('Bad condition getting target node')
+        logging.critical('Bad condition getting target node')
         sys.exit(1)
     if gVerbose:
         print 'Target node:', target_node
@@ -708,7 +698,7 @@ def migration_start(args):
     # Add groups to mobile users
     add_groups(groups)
     # Set password if available
-    if hasattr(args,'user_username') and hasattr(args,'user_password') and args.user_username in user_list:
+    if hasattr(args, 'user_username') and hasattr(args, 'user_password') and args.user_username in user_list:
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
 
@@ -744,7 +734,7 @@ Enter your password to continue.'''
         else:
             # Error: Unknown button
             logging.critical('Unknown button: %s', dialog_result['button'])
-            sys.exit(0)
+            sys.exit(1)
         dialog_text = '''Your password was incorrect. Please try again'''
 
     # Add user's username and password in arguments
@@ -775,19 +765,21 @@ def migration_headless(args):
         logging.debug('Waiting for user to log out: %s', username)
         time.sleep(1)
 
-    # Unload loginwindow so users can't log in
-    logging.debug('Unload loginwindow')
-    execute_command(['launchctl', 'unload', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
-
     # Perform migration
-    migration_start(args)
-
-    # Unload loginwindow so users can't log in
-    logging.debug('Load loginwindow')
-    execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
-
-    # Remove the launchdaemon
-    remove_launchdaemon()
+    try:
+        # Unload loginwindow so users can't log in
+        logging.debug('Unload loginwindow')
+        execute_command(['launchctl', 'unload', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
+        migration_start(args)
+    except SystemExit:
+        logging.debug('System exit caught.')
+    finally:
+        # Unload loginwindow so users can't log in
+        logging.debug('Load loginwindow')
+        execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
+        # Remove the launchdaemon
+        remove_launchdaemon()
+    logging.debug('Finished migration headless')
 
 
 def main():
@@ -803,11 +795,11 @@ def main():
     else:
         # Do the migration, must be run as a local administrator
         if not gTestingMode and os.getuid() != 0:
-            print 'You must run this script with administrator privileges.'
+            logging.critical('You must run this script with administrator privileges.')
             sys.exit(1)
         migration_start(args)
     # Remove script
-    if not args.debug:
+    if args.delete:
         execute_command(['srm', sys.argv[0]])
 
 
