@@ -14,6 +14,7 @@ import argparse
 import getpass
 import types
 import time
+from datetime import datetime
 from ConfigParser import SafeConfigParser
 from SystemConfiguration import SCDynamicStoreCopyConsoleUser
 
@@ -21,7 +22,8 @@ from SystemConfiguration import SCDynamicStoreCopyConsoleUser
 kTmpPath = '/tmp/'
 kIniFilePath = kTmpPath + 'dsMigrateClient.ini'
 kProgramPath = kTmpPath + 'dsMigrateClient.py'
-kLogPath = kTmpPath + 'dsMigrateClient.log'
+kLogPath = '/var/log/dsMigrateClient.log'
+kIconPath = '/Library/Application Support/JAMF/VBP/VBPLogo.png'
 kLaunchDaemonName = 'com.pereljon.dsMigrateClient'
 kLaunchDaemonPath = '/Library/LaunchDaemons/' + kLaunchDaemonName + '.plist'
 kLaunchDaemon = '<?xml version="1.0" encoding="UTF-8"?>\n\
@@ -43,8 +45,8 @@ kLaunchDaemon = '<?xml version="1.0" encoding="UTF-8"?>\n\
 
 
 def parse_arguments():
+    """Parse arguments"""
     # GLOBALS
-    global gTestingMode
     global gForceDebug
     global gVerbose
 
@@ -53,30 +55,31 @@ def parse_arguments():
         description='Migrate a mobile user from once Mac OS X Directory Service to another.')
     parser.add_argument('--ad', action='store_true',
                         help='migrating to Active Directory.')
-    parser.add_argument('-c', dest='computer', metavar='COMPUTER_NAME',
+    parser.add_argument('--computer', metavar='COMPUTER_NAME',
                         help='computer name which will be set in new directory.')
     parser.add_argument('-d', '--debug', action='store_true',
                         help='log all debugging info to log file.')
     parser.add_argument('--delete', action='store_true',
                         help='delete script and settings file after running.')
-    parser.add_argument('-f', dest='file', metavar='filename',
-                        help='read setting from file.')
-    parser.add_argument('--interactive', action='store_true',
-                        help='run in interactive mode. Ask logged in user for password, set up launchdaemon to run in headless mode, and logout.')
-    parser.add_argument('--headless', action='store_true',
-                        help='headless (daemon) mode. Wait to run until all users are logged out.')
-    parser.add_argument('--ldap', action='store_true',
-                        help='migrating to LDAP (OpenDirectory).')
     parser.add_argument('--dns', metavar='DNS_SERVER', action='append',
                         help='set up manual DNS entries.')
+    parser.add_argument('-f', '--file', metavar='filename',
+                        help='read setting from file.')
+    parser.add_argument('-H', '--headless', action='store_true',
+                        help='headless (daemon) mode. Wait to run until all users are logged out.')
+    parser.add_argument('-i', '--interactive', action='store_true',
+                        help='run in interactive mode. Ask logged in user for password,'
+                             ' set up launchdaemon to run in headless mode, and logout.')
+    parser.add_argument('-j', '--jamf', action='store_true',
+                        help='display status using JAMF Helper.')
+    parser.add_argument('--ldap', action='store_true',
+                        help='migrating to LDAP (OpenDirectory).')
     parser.add_argument('-p', dest='target_password', metavar='PASSWORD',
                         help='password for target (new) domain administrator.')
     parser.add_argument('-P', dest='source_password', metavar='PASSWORD',
                         help='password for source (old) domain administrator.')
     parser.add_argument('-s', '--serial', action='store_true',
                         help='use system serial number as computer name.')
-    parser.add_argument('-t', '--testing', action='store_true',
-                        help='run in testing mode. Migration commands are logged to log file.')
     parser.add_argument('-u', dest='target_username', metavar='USERNAME',
                         help='administrator user for target (new) domain.')
     parser.add_argument('-U', dest='source_username', metavar='USERNAME',
@@ -86,11 +89,11 @@ def parse_arguments():
     args = parser.parse_args()
 
     # Set the logging level
-    if args.testing or args.debug:
+    if args.debug:
         logging.basicConfig(filename=kLogPath, level=logging.DEBUG)
     else:
         logging.basicConfig(filename=kLogPath, level=logging.INFO)
-    logging.info('Logging started')
+    logging.info('### Logging started at: %s', datetime.now())
     if args.file is not None:
         if not os.path.exists(args.file):
             # Settings file not found
@@ -99,24 +102,15 @@ def parse_arguments():
         # Parse the settings file
         args = load_preferences(args)
         # Set the logging level
-        if args.testing or args.debug:
+        if args.debug:
             logger = logging.getLogger()
             logger.setLevel(level=logging.DEBUG)
 
     # Set globals from arguments
-    # Set testing mode if running in testing mode or swapped testing mode
-    gTestingMode = args.testing
     gForceDebug = args.debug
-    # Set verbose output if requested or running in testing mode
-    gVerbose = args.verbose or gTestingMode
+    # Set verbose output if requested
+    gVerbose = args.verbose
 
-    if gTestingMode:
-        logging.info('### Running in Test Mode ###')
-        print '### Running in Test Mode ###'
-    else:
-        logging.info('### Running in Production Mode###')
-        if gVerbose:
-            print '### Running in Production Mode ###'
     logging.debug('Running as: %s', getpass.getuser())
 
     # Error-checking on arguments
@@ -134,7 +128,7 @@ def parse_arguments():
 
 
 def load_preferences(args):
-    # Load preferences file and return as args namespace
+    """Load preferences file and return as args namespace"""
     logging.info('Loading preferences: %s', args.file)
     parser = SafeConfigParser()
     parser.read(args.file)
@@ -170,7 +164,7 @@ def load_preferences(args):
 
 
 def save_preferences(args, filename):
-    # Save args to preferences
+    """Save arguments to preferences"""
     logging.info('Saving preferences: %s', filename)
     setattr(args, 'file', None)
     parser = SafeConfigParser()
@@ -199,7 +193,7 @@ def save_preferences(args, filename):
 
 
 def execute_command(command):
-    # Execute command
+    """Execute system command"""
     logging.debug('executeCommand: %s', ' '.join(command))
     try:
         result = subprocess.check_output(command)
@@ -272,6 +266,42 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
         logging.info('User cancelled: %s', error)
     else:
         return return_result
+
+
+def jamf_helper(window_type, title=None, heading=None, description=None):
+    """Use jamfhelper to open a window"""
+    logging.info('Jamf Helper')
+    jamf_helper_path = '/Library/Application Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper'
+    jamf_helper_types = ['hud', 'utility', 'fs', 'kill']
+    jamf_helper_positions = ['ul', 'll', 'ur', 'lr']
+    jamf_helper_alignment = ['right', 'left', 'center', 'justified', 'natural']
+
+    # Error checking
+    if not os.path.exists(jamf_helper_path):
+        logging.error('JAMF helper not found.')
+        return
+    if window_type not in jamf_helper_types:
+        logging.critical('Bad window type: %s', window_type)
+        sys.exit(1)
+
+    if window_type == 'kill':
+        # Kill the jamfHelper process to remove fullscreen window
+        execute_command(['killall', 'jamfHelper'])
+        return
+    # Options
+    options = ['-windowType', window_type]
+    if title is not None:
+        options = options + ['-title', title]
+    if heading is not None:
+        options = options + ['-heading', heading]
+    if description is not None:
+        options = options + ['-description', description]
+    # Concatenate command
+    command = [jamf_helper_path] + options
+    # Kill jamfHelper (just in case)
+    jamf_helper('kill')
+    # Execute command
+    subprocess.Popen(command)
 
 
 def authorize_password(username, password, domain='.'):
@@ -351,13 +381,16 @@ def set_dns_servers(network_service, dns_servers):
     logging.info('Set DNS servers for %s: %s', network_service, dns_servers)
     command = ['networksetup', 'setdnsservers', network_service] + dns_servers
     execute_command(command)
+    execute_command(['dscacheutil', '-flushcache'])
 
 
 def ds_get_nodes():
     # Check Directory Services search order
-    logging.info('Get source and target directories')
+    logging.info('Get Directory Services nodes')
     command = ['dscl', '-plist', '/Search', '-read', '/']
     result_dscl = execute_command(command)
+    if not len(result_dscl):
+        sys.exit(1)
     # Find CSPSearchPaths
     search_path = re.search(
         r'\s*<key>dsAttrTypeStandard:CSPSearchPath</key>\n\s*<array>\n(?:\s*<string>.+</string>\n)+\s*</array>\n',
@@ -385,6 +418,8 @@ def ds_get_nodes():
             command = ['dscl', node_path, '-read', '/OrganizationalUnit/Domain Controllers',
                        'dsAttrTypeStandard:AppleMetaNodeLocation']
             result_dscl = execute_command(command)
+            if not len(result_dscl):
+                sys.exit(1)
             search_meta = re.search(r'AppleMetaNodeLocation:\n\s*(.*)', result_dscl)
             node_meta = search_meta.group(1)
         else:
@@ -470,6 +505,7 @@ def ds_add_node(node_type, node_domain, computer, username, password):
         logging.critical('Unknown directory type: %s', node_type)
         sys.exit(1)
     execute_command(command)
+    execute_command(['dscacheutil', '-flushcache'])
 
 
 def ds_remove_node(node_type, node_domain, username, password):
@@ -504,6 +540,7 @@ def ds_remove_node(node_type, node_domain, username, password):
         logging.critical('Unknown directory type: %s', node_type)
         sys.exit(1)
     execute_command(command)
+    execute_command(['dscacheutil', '-flushcache'])
 
 
 def get_mobile_users(node):
@@ -603,12 +640,13 @@ def set_password(username, password, node, domain_username, domain_password):
     command = ['dscl', '-u', domain_username, '-P', domain_password, node['path'], '-passwd', '/Users/' + username,
                password]
     execute_command(command)
-    execute_command(['dscacheutil', '-flushcache'])
 
 
 def migration_start(args):
     logging.info('Migrating client')
 
+    if args.jamf:
+        jamf_helper('fs', heading='Directory Services User Migration', description='Starting migration...')
     # Get current Directory Services node
     nodes = ds_get_nodes()
     nodes_count = len(nodes)
@@ -636,8 +674,6 @@ def migration_start(args):
     else:
         logging.critical('Unknown error condition: %s', nodes)
         sys.exit(1)
-    # if gVerbose:
-    #     print 'Source node:', source_node
 
     # Get mobile users
     user_list = get_mobile_users(source_node)
@@ -648,15 +684,19 @@ def migration_start(args):
     logged_user = getpass.getuser()
     # if gVerbose:
     #     print 'Logged in user:', logged_user
-    if not gTestingMode and logged_user in user_list:
+    if logged_user in user_list:
         print 'This script must run from a local user account.'
 
     # Set Ethernet and Wi-Fi DNS if provided
     if args.dns:
+        if args.jamf:
+            jamf_helper('fs', heading='Directory Services User Migration', description='Setting DNS...')
         for network_service in get_network_services():
             set_dns_servers(network_service, args.dns)
 
     # Add target (new) Directory Service node
+    if args.jamf:
+        jamf_helper('fs', heading='Directory Services User Migration', description='Adding new Directory Service')
     if args.serial:
         computer = get_serialnumber()
     else:
@@ -685,14 +725,24 @@ def migration_start(args):
     if gVerbose:
         print 'Target node:', target_node
 
-    # Migrate user homes (change ownership to target node)
-    migrate_homes(target_node, user_list)
+    if args.jamf:
+        jamf_helper('fs', heading='Directory Services User Migration',
+                    description='Removing old Directory Service...')
     # Remove local groups
     groups = remove_groups(user_list)
     # Remove local users
     remove_users(user_list)
     # Remove source node
     ds_remove_node(source_node['type'], source_node['domain'], args.source_username, args.source_password)
+
+    # Migrate user homes (change ownership to target node)
+    if args.jamf:
+        jamf_helper('fs', heading='Directory Services User Migration',
+                    description='Migrating user home permissions (this may take some time)...')
+    migrate_homes(target_node, user_list)
+
+    if args.jamf:
+        jamf_helper('fs', heading='Directory Services User Migration', description='Converting mobile accounts...')
     # Create mobile users
     add_users(user_list)
     # Add groups to mobile users
@@ -747,35 +797,36 @@ Enter your password to continue.'''
     # Save preferences file with updated arguments
     save_preferences(args, kIniFilePath)
 
+    display_dialog('You must now log out to complete the migration.\n'
+                   'Save any open documents, quit all applications and press Log Out to continue.',
+                   title='Directory Migration Assistant', buttons=['Log Out'], icon='caution')
+
     # Launch the launchdaemon
     launch_launchdaemon()
-
-    # Try to log out user
-    logout()
 
 
 def migration_headless(args):
     # Headless migration is launched by the LaunchDaemon
     logging.info('Do migration headless')
-    # Wait until user is logged out
-    while True:
-        username = get_console_user()
-        if not username:
-            break
-        logging.debug('Waiting for user to log out: %s', username)
-        time.sleep(1)
 
-    # Perform migration
     try:
-        # Unload loginwindow so users can't log in
         logging.debug('Unload loginwindow')
+        if args.jamf:
+            jamf_helper('utility', title='Directory Services User Migration',
+                        description='User migration starting in 30 seconds.')
+        # Wait for logout to complete
+        time.sleep(30)
+        # Unload loginwindow (force logout)
         execute_command(['launchctl', 'unload', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
+        # Perform migration
         migration_start(args)
     except SystemExit:
         logging.debug('System exit caught.')
         raise
     finally:
-        # Unload loginwindow so users can't log in
+        # Reload loginwindow so users can log in
+        if args.jamf:
+            jamf_helper('kill')
         logging.debug('Load loginwindow')
         execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
         # Remove the launchdaemon
@@ -795,7 +846,7 @@ def main():
         migration_headless(args)
     else:
         # Do the migration, must be run as a local administrator
-        if not gTestingMode and os.getuid() != 0:
+        if os.getuid() != 0:
             logging.critical('You must run this script with administrator privileges.')
             sys.exit(1)
         migration_start(args)
