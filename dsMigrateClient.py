@@ -49,6 +49,7 @@ def parse_arguments():
     # GLOBALS
     global gForceDebug
     global gVerbose
+    global jamf_binary
 
     # Parse arguments
     parser = argparse.ArgumentParser(
@@ -94,12 +95,14 @@ def parse_arguments():
     else:
         logging.basicConfig(filename=kLogPath, level=logging.INFO)
     logging.info('### Logging started at: %s', datetime.now())
+
+    # Try to load preferences from file
     if args.file is not None:
         if not os.path.exists(args.file):
             # Settings file not found
             logging.critical('Missing settings file at: %s', args.file)
             sys.exit(1)
-        # Parse the settings file
+        # Load and parse the settings file
         args = load_preferences(args)
         # Set the logging level
         if args.debug:
@@ -111,6 +114,12 @@ def parse_arguments():
     # Set verbose output if requested
     gVerbose = args.verbose
 
+    # Set location of jamf binary
+    if args.jamf:
+        jamf_binary = execute_command(['which', 'jamf']).strip()
+        if not os.path.exists(jamf_binary):
+            logging.critical('Could not find jamf binary at: %s', jamf_binary)
+            sys.exit(1)
     logging.debug('Running as: %s', getpass.getuser())
 
     # Error-checking on arguments
@@ -286,7 +295,8 @@ def jamf_helper(window_type, title=None, heading=None, description=None):
 
     if window_type == 'kill':
         # Kill the jamfHelper process to remove fullscreen window
-        execute_command(['killall', 'jamfHelper'])
+        logging.debug('Killing jamfhelper')
+        subprocess.Popen(['killall', 'jamfHelper'])
         return
     # Options
     options = ['-windowType', window_type]
@@ -475,7 +485,7 @@ def ds_add_node(node_type, node_domain, computer, username, password):
             computer = ['-c' + computer]
         else:
             computer = []
-        options = ['-N', '-a', node_domain] + auth + computer
+        options = ['-N', '-a', node_domain, '-f'] + auth + computer
         command = ['dsconfigldap'] + options
     elif node_type == 'AD':
         # Add Active Directory command
@@ -491,7 +501,7 @@ def ds_add_node(node_type, node_domain, computer, username, password):
             computer = ['-computer' + computer]
         else:
             computer = []
-        options = ['-add', node_domain, '-username', username] + auth + computer
+        options = ['-add', node_domain, '-username', username, '-force'] + auth + computer
         # Advanced Options - User Experience:
         mobile = ['-mobile', 'enable']
         mobileconfirm = ['-mobileconfirm', 'disable']
@@ -751,6 +761,14 @@ def migration_start(args):
     if hasattr(args, 'user_username') and hasattr(args, 'user_password') and args.user_username in user_list:
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
+    if args.jamf:
+        # Perform JAMF recon
+        jamf_helper('fs', heading='Directory Services User Migration', description='Updating JAMF inventory...')
+        execute_command([jamf_binary, 'recon'])
+        # Perform JAMF manage
+        jamf_helper('fs', heading='Directory Services User Migration',
+                    description='Enforcing JAMF management framework...')
+        execute_command([jamf_binary, 'manage'])
 
 
 def migration_interactive(args):
@@ -853,6 +871,7 @@ def main():
     # Remove script
     if args.delete:
         execute_command(['srm', sys.argv[0]])
+    logging.info('### EXIT ###')
 
 
 # MAIN
