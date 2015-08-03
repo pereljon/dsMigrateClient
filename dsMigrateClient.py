@@ -296,7 +296,7 @@ def jamf_helper(window_type, title=None, heading=None, description=None):
     if window_type == 'kill':
         # Kill the jamfHelper process to remove fullscreen window
         logging.debug('Killing jamfhelper')
-        subprocess.Popen(['killall', 'jamfHelper'])
+        execute_command(['killall', 'jamfHelper'])
         return
     # Options
     options = ['-windowType', window_type]
@@ -341,8 +341,8 @@ def logout():
 
 
 def launch_launchdaemon():
+    '''Create and launch the launchdaemon'''
     logging.info('Launching launchdaemon')
-
     # Copy script for LaunchDaemon
     execute_command(['cp', '-a', sys.argv[0], kProgramPath])
     # Save LaunchDaemon
@@ -354,10 +354,8 @@ def launch_launchdaemon():
 
 
 def remove_launchdaemon():
+    '''Remove the launchdaemon'''
     logging.info('Remove launchdaemon')
-
-    # Load loginwindow to allow user to log in
-    execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
     # Unload LaunchDaemon
     execute_command(['launchctl', 'unload', kLaunchDaemonPath])
     # Remove LaunchDaemon
@@ -758,7 +756,7 @@ def migration_start(args):
     # Add groups to mobile users
     add_groups(groups)
     # Set password if available
-    if hasattr(args, 'user_username') and hasattr(args, 'user_password') and args.user_username in user_list:
+    if args.user_username and args.user_password and args.user_username in user_list:
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
     if args.jamf:
@@ -843,12 +841,23 @@ def migration_headless(args):
         raise
     finally:
         # Reload loginwindow so users can log in
-        if args.jamf:
-            jamf_helper('kill')
         logging.debug('Load loginwindow')
         execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
         # Remove the launchdaemon
         remove_launchdaemon()
+        if args.jamf:
+            jamf_helper('kill')
+    # Wait for user to log in
+    while True:
+        username = get_console_user()
+        if username:
+            break
+        logging.debug('Waiting for user to log in')
+        time.sleep(5)
+    # Sync FileVault2
+    logging.debug('Syncing FileVault')
+    execute_command(['fdesetup', 'sync'])
+    # Finished migration
     logging.debug('Finished migration headless')
 
 
