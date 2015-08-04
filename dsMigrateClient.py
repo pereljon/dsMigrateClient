@@ -19,29 +19,48 @@ from ConfigParser import SafeConfigParser
 from SystemConfiguration import SCDynamicStoreCopyConsoleUser
 
 # CONSTANTS
-kTmpPath = '/tmp/'
-kIniFilePath = kTmpPath + 'dsMigrateClient.ini'
-kProgramPath = kTmpPath + 'dsMigrateClient.py'
-kLogPath = '/var/log/dsMigrateClient.log'
-kIconPath = '/Library/Application Support/JAMF/VBP/VBPLogo.png'
-kLaunchDaemonName = 'com.pereljon.dsMigrateClient'
-kLaunchDaemonPath = '/Library/LaunchDaemons/' + kLaunchDaemonName + '.plist'
-kLaunchDaemon = '<?xml version="1.0" encoding="UTF-8"?>\n\
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
-<plist version="1.0">\n\
-<dict>\n\
-    <key>Label</key>\n\
-    <string>' + kLaunchDaemonName + '</string>\n\
-    <key>ProgramArguments</key>\n\
-    <array>\n\
-        <string>' + kProgramPath + '</string>\n\
-        <string>-f</string>\n\
-        <string>' + kIniFilePath + '</string>\n\
-    </array>\n\
-    <key>RunAtLoad</key>\n\
-    <true/>\n\
-</dict>\n\
-</plist>'
+tmp_path = '/tmp/'
+ini_file_path = tmp_path + 'dsMigrateClient.ini'
+program_path = tmp_path + 'dsMigrateClient.py'
+log_path = '/var/log/dsMigrateClient.log'
+icon_path = '/Library/Application Support/JAMF/VBP/VBPLogo.png'
+launchdaemon_name = 'com.pereljon.dsMigrateClient'
+launchdaemon_path = '/Library/LaunchDaemons/' + launchdaemon_name + '.plist'
+launchdaemon_plist = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>launchdaemon_name</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>program_path</string>
+        <string>-f</string>
+        <string>ini_file_path</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>'''
+fv_plist = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Username</key>
+<string>local_username</string>
+<key>Password</key>
+<string>local_password</string>
+<key>AdditionalUsers</key>
+<array>
+    <dict>
+        <key>Username</key>
+        <string>user_username</string>
+        <key>Password</key>
+        <string>user_password</string>
+    </dict>
+</array>
+</dict>
+</plist>'''
 
 
 def parse_arguments():
@@ -85,15 +104,19 @@ def parse_arguments():
                         help='administrator user for target (new) domain.')
     parser.add_argument('-U', dest='source_username', metavar='USERNAME',
                         help='administrator user for source (old) domain.')
+    parser.add_argument('--local_username', metavar='USERNAME',
+                        help='local administrator user.')
+    parser.add_argument('--local_password', metavar='PASSWORD',
+                        help='local administrator password.')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose output.')
     parser.add_argument('target_domain', nargs='?', help='AD domain or LDAP server')
     args = parser.parse_args()
 
     # Set the logging level
     if args.debug:
-        logging.basicConfig(filename=kLogPath, level=logging.DEBUG)
+        logging.basicConfig(filename=log_path, level=logging.DEBUG)
     else:
-        logging.basicConfig(filename=kLogPath, level=logging.INFO)
+        logging.basicConfig(filename=log_path, level=logging.INFO)
     logging.info('### Logging started at: %s', datetime.now())
 
     # Try to load preferences from file
@@ -279,7 +302,7 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
 
 def jamf_helper(window_type, title=None, heading=None, description=None):
     """Use jamfhelper to open a window"""
-    logging.info('Jamf Helper')
+    logging.info('Jamf Helper: %s', window_type)
     jamf_helper_path = '/Library/Application Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper'
     jamf_helper_types = ['hud', 'utility', 'fs', 'kill']
     jamf_helper_positions = ['ul', 'll', 'ur', 'lr']
@@ -296,7 +319,7 @@ def jamf_helper(window_type, title=None, heading=None, description=None):
     if window_type == 'kill':
         # Kill the jamfHelper process to remove fullscreen window
         logging.debug('Killing jamfhelper')
-        execute_command(['killall', 'jamfHelper'])
+        subprocess.Popen(['killall', 'jamfHelper'])
         return
     # Options
     options = ['-windowType', window_type]
@@ -340,27 +363,53 @@ def logout():
         return True
 
 
-def launch_launchdaemon():
-    '''Create and launch the launchdaemon'''
+def loginwindow_unload():
+    logging.debug('Unload loginwindow')
+    execute_command(['launchctl', 'unload', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
+
+
+def loginwindow_load():
+    logging.debug('Load loginwindow')
+    execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
+
+
+def launchdaemon_launch():
+    """Create and launch the launchdaemon"""
     logging.info('Launching launchdaemon')
     # Copy script for LaunchDaemon
-    execute_command(['cp', '-a', sys.argv[0], kProgramPath])
+    execute_command(['cp', '-a', sys.argv[0], program_path])
     # Save LaunchDaemon
-    write_file = open(kLaunchDaemonPath, 'w')
-    write_file.write(kLaunchDaemon)
+    launchdaemon_write = launchdaemon_plist
+    launchdaemon_write = launchdaemon_write.replace(launchdaemon_name, launchdaemon_name)
+    launchdaemon_write = launchdaemon_write.replace(program_path, program_path)
+    launchdaemon_write = launchdaemon_write.replace(ini_file_path, ini_file_path)
+    write_file = open(launchdaemon_path, 'w')
+    write_file.write(launchdaemon_write)
     write_file.close()
     # Launch LaunchDaemon
-    execute_command(['launchctl', 'load', kLaunchDaemonPath])
+    execute_command(['launchctl', 'load', launchdaemon_path])
 
 
-def remove_launchdaemon():
-    '''Remove the launchdaemon'''
+def launchdaemon_remove():
+    """Remove the launchdaemon"""
     logging.info('Remove launchdaemon')
     # Unload LaunchDaemon
-    execute_command(['launchctl', 'unload', kLaunchDaemonPath])
+    # execute_command(['launchctl', 'unload', launchdaemon_path])
+    execute_command(['srm', launchdaemon_path])
     # Remove LaunchDaemon
-    # execute_command(['launchctl', 'remove', kLaunchDaemonName])
-    execute_command(['srm', kLaunchDaemonPath])
+    execute_command(['launchctl', 'remove', launchdaemon_name])
+
+
+def fv_setup(args):
+    logging.info('FileVault setup for: %s', args.user_username)
+    fv_input = fv_plist
+    fv_input = fv_input.replace('local_username', args.local_username)
+    fv_input = fv_input.replace('local_password', args.local_password)
+    fv_input = fv_input.replace('user_username', args.user_username)
+    fv_input = fv_input.replace('user_password', args.user_password)
+    fv_process = subprocess.Popen(['/usr/bin/fdesetup', 'add', '-inputplist'], stdin=subprocess.PIPE)
+    fv_process.communicate(fv_input)
+    fv_process.wait()
 
 
 def get_serialnumber():
@@ -702,6 +751,14 @@ def migration_start(args):
         for network_service in get_network_services():
             set_dns_servers(network_service, args.dns)
 
+    # Remove local groups
+    if args.jamf:
+        jamf_helper('fs', heading='Directory Services User Migration',
+                    description='Removing users and groups...')
+    groups = remove_groups(user_list)
+    # Remove local users
+    remove_users(user_list)
+
     # Add target (new) Directory Service node
     if args.jamf:
         jamf_helper('fs', heading='Directory Services User Migration', description='Adding new Directory Service')
@@ -733,14 +790,10 @@ def migration_start(args):
     if gVerbose:
         print 'Target node:', target_node
 
+    # Remove source node
     if args.jamf:
         jamf_helper('fs', heading='Directory Services User Migration',
                     description='Removing old Directory Service...')
-    # Remove local groups
-    groups = remove_groups(user_list)
-    # Remove local users
-    remove_users(user_list)
-    # Remove source node
     ds_remove_node(source_node['type'], source_node['domain'], args.source_username, args.source_password)
 
     # Migrate user homes (change ownership to target node)
@@ -759,6 +812,9 @@ def migration_start(args):
     if args.user_username and args.user_password and args.user_username in user_list:
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
+        if args.local_username and args.local_password:
+            logging.debug('Setting FileVault for: %s', args.user_username)
+            fv_setup(args)
     if args.jamf:
         # Perform JAMF recon
         jamf_helper('fs', heading='Directory Services User Migration', description='Updating JAMF inventory...')
@@ -806,19 +862,20 @@ Enter your password to continue.'''
     # Add user's username and password in arguments
     setattr(args, 'user_username', username)
     setattr(args, 'user_password', password)
-    # Set interactive flag to false in arguments
+    # Set interactive & headless values for saving preferences
     setattr(args, 'interactive', False)
-    # Set headless flag to true
     setattr(args, 'headless', True)
     # Save preferences file with updated arguments
-    save_preferences(args, kIniFilePath)
-
+    save_preferences(args, ini_file_path)
+    # Reset interactive & headless arguments back to actual values
+    setattr(args, 'interactive', True)
+    setattr(args, 'headless', False)
+    # Display dialog and wait.
     display_dialog('You must now log out to complete the migration.\n'
                    'Save any open documents, quit all applications and press Log Out to continue.',
                    title='Directory Migration Assistant', buttons=['Log Out'], icon='caution')
-
     # Launch the launchdaemon
-    launch_launchdaemon()
+    launchdaemon_launch()
 
 
 def migration_headless(args):
@@ -826,37 +883,29 @@ def migration_headless(args):
     logging.info('Do migration headless')
 
     try:
-        logging.debug('Unload loginwindow')
         if args.jamf:
             jamf_helper('utility', title='Directory Services User Migration',
                         description='User migration starting in 30 seconds.')
         # Wait for logout to complete
         time.sleep(30)
         # Unload loginwindow (force logout)
-        execute_command(['launchctl', 'unload', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
+        loginwindow_unload()
         # Perform migration
         migration_start(args)
     except SystemExit:
         logging.debug('System exit caught.')
-        raise
-    finally:
-        # Reload loginwindow so users can log in
-        logging.debug('Load loginwindow')
-        execute_command(['launchctl', 'load', '/System/Library/LaunchDaemons/com.apple.loginwindow.plist'])
-        # Remove the launchdaemon
-        remove_launchdaemon()
         if args.jamf:
             jamf_helper('kill')
-    # Wait for user to log in
-    while True:
-        username = get_console_user()
-        if username:
-            break
-        logging.debug('Waiting for user to log in')
-        time.sleep(5)
-    # Sync FileVault2
-    logging.debug('Syncing FileVault')
-    execute_command(['fdesetup', 'sync'])
+        # Reload loginwindow so users can log in
+        loginwindow_load()
+        # Remove the launchdaemon
+        launchdaemon_remove()
+        raise
+
+    if args.jamf:
+        jamf_helper('kill')
+    # Reload loginwindow so users can log in
+    loginwindow_load()
     # Finished migration
     logging.debug('Finished migration headless')
 
@@ -864,7 +913,6 @@ def migration_headless(args):
 def main():
     # Parse arguments
     args = parse_arguments()
-
     if args.interactive:
         # Do interactive migration, asking for user password, logging out, and running headless migration as daemon.
         migration_interactive(args)
@@ -877,9 +925,12 @@ def main():
             logging.critical('You must run this script with administrator privileges.')
             sys.exit(1)
         migration_start(args)
-    # Remove script
     if args.delete:
+        # Remove script
         execute_command(['srm', sys.argv[0]])
+    if args.headless:
+        # Remove the launchdaemon
+        launchdaemon_remove()
     logging.info('### EXIT ###')
 
 
