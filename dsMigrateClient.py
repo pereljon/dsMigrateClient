@@ -380,9 +380,9 @@ def launchdaemon_launch():
     execute_command(['cp', '-a', sys.argv[0], program_path])
     # Save LaunchDaemon
     launchdaemon_write = launchdaemon_plist
-    launchdaemon_write = launchdaemon_write.replace(launchdaemon_name, launchdaemon_name)
-    launchdaemon_write = launchdaemon_write.replace(program_path, program_path)
-    launchdaemon_write = launchdaemon_write.replace(ini_file_path, ini_file_path)
+    launchdaemon_write = launchdaemon_write.replace('launchdaemon_name', launchdaemon_name)
+    launchdaemon_write = launchdaemon_write.replace('program_path', program_path)
+    launchdaemon_write = launchdaemon_write.replace('ini_file_path', ini_file_path)
     write_file = open(launchdaemon_path, 'w')
     write_file.write(launchdaemon_write)
     write_file.close()
@@ -883,10 +883,10 @@ def migration_headless(args):
     logging.info('Do migration headless')
 
     try:
+        # Wait for logout to complete
         if args.jamf:
             jamf_helper('utility', title='Directory Services User Migration',
                         description='User migration starting in 30 seconds.')
-        # Wait for logout to complete
         time.sleep(30)
         # Unload loginwindow (force logout)
         loginwindow_unload()
@@ -928,10 +928,10 @@ def main():
     if args.delete:
         # Remove script
         execute_command(['srm', sys.argv[0]])
+    logging.info('### EXIT ###')
     if args.headless:
         # Remove the launchdaemon
         launchdaemon_remove()
-    logging.info('### EXIT ###')
 
 
 # MAIN
