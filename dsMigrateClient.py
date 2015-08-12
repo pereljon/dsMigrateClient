@@ -23,7 +23,6 @@ tmp_path = '/tmp/'
 ini_file_path = tmp_path + 'dsMigrateClient.ini'
 program_path = tmp_path + 'dsMigrateClient.py'
 log_path = '/var/log/dsMigrateClient.log'
-icon_path = '/Library/Application Support/JAMF/VBP/VBPLogo.png'
 launchdaemon_name = 'com.pereljon.dsMigrateClient'
 launchdaemon_path = '/Library/LaunchDaemons/' + launchdaemon_name + '.plist'
 launchdaemon_plist = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -90,6 +89,10 @@ def parse_arguments():
     parser.add_argument('-i', '--interactive', action='store_true',
                         help='run in interactive mode. Ask logged in user for password,'
                              ' set up launchdaemon to run in headless mode, and logout.')
+    parser.add_argument('--iconpng', metavar='PATH',
+                        help='path to PNG icon (used in JAMF dialogs).')
+    parser.add_argument('--iconico', metavar='PATH',
+                        help='path to ICO icon (used in password dialog).')
     parser.add_argument('-j', '--jamf', action='store_true',
                         help='display status using JAMF Helper.')
     parser.add_argument('--ldap', action='store_true',
@@ -259,7 +262,14 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
         title = ''
     if icon:
         # icon can be 'stop', 'caution', 'note'
-        icon = ' with icon ' + icon
+        if icon in ['stop', 'caution', 'note']:
+            icon = ' with icon ' + icon
+        elif os.path.exists(icon):
+            icon = unix_to_macpath(icon)
+            icon = ' with icon file "' + icon + '"'
+            print icon
+        else:
+            icon = ''
     else:
         icon = ''
     if buttons is not None and len(buttons):
@@ -300,13 +310,18 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
         return return_result
 
 
-def jamf_helper(window_type, title=None, heading=None, description=None):
+def unix_to_macpath(unix_path):
+    command = ['osascript', '-e', 'POSIX file "' + unix_path + '" as text']
+    return execute_command(command).strip()
+
+
+def jamf_helper(window_type, title=None, heading=None, description=None, icon=None, position=None, button1=None):
     """Use jamfhelper to open a window"""
     logging.info('Jamf Helper: %s', window_type)
     jamf_helper_path = '/Library/Application Support/JAMF/bin/jamfHelper.app/Contents/MacOS/jamfHelper'
     jamf_helper_types = ['hud', 'utility', 'fs', 'kill']
-    jamf_helper_positions = ['ul', 'll', 'ur', 'lr']
-    jamf_helper_alignment = ['right', 'left', 'center', 'justified', 'natural']
+    jamf_helper_positions = ['ul', 'll', 'ur', 'lr', None]
+    jamf_helper_alignment = ['right', 'left', 'center', 'justified', 'natural', None]
 
     # Error checking
     if not os.path.exists(jamf_helper_path):
@@ -315,11 +330,17 @@ def jamf_helper(window_type, title=None, heading=None, description=None):
     if window_type not in jamf_helper_types:
         logging.critical('Bad window type: %s', window_type)
         sys.exit(1)
+    if window_type == 'fs' and button1 is not None:
+        logging.critical('Fullscreen window with button')
+        sys.exit(1)
+    if position not in jamf_helper_positions:
+        logging.critical('Bad position type: %s', position)
+        sys.exit(1)
 
     if window_type == 'kill':
         # Kill the jamfHelper process to remove fullscreen window
         logging.debug('Killing jamfhelper')
-        subprocess.Popen(['killall', 'jamfHelper'])
+        execute_command(['killall', 'jamfHelper'])
         return
     # Options
     options = ['-windowType', window_type]
@@ -329,12 +350,22 @@ def jamf_helper(window_type, title=None, heading=None, description=None):
         options = options + ['-heading', heading]
     if description is not None:
         options = options + ['-description', description]
+    if icon is not None:
+        options = options + ['-icon', icon]
+    if position is not None:
+        options = options + ['-windowPosition', position]
+    if window_type == 'hud':
+        options = options + ['-lockHUD']
+    if button1 is not None:
+        options = options + ['-button1', button1]
     # Concatenate command
     command = [jamf_helper_path] + options
-    # Kill jamfHelper (just in case)
-    jamf_helper('kill')
     # Execute command
-    subprocess.Popen(command)
+    jamf_helper('kill')
+    p = subprocess.Popen(command)
+    if button1 is not None:
+        # Wait for button to be pressed
+        p.wait()
 
 
 def authorize_password(username, password, domain='.'):
@@ -407,9 +438,13 @@ def fv_setup(args):
     fv_input = fv_input.replace('local_password', args.local_password)
     fv_input = fv_input.replace('user_username', args.user_username)
     fv_input = fv_input.replace('user_password', args.user_password)
-    fv_process = subprocess.Popen(['/usr/bin/fdesetup', 'add', '-inputplist'], stdin=subprocess.PIPE)
-    fv_process.communicate(fv_input)
-    fv_process.wait()
+    fv_process = subprocess.Popen(['/usr/bin/fdesetup', 'add', '-verbose', '-inputplist'], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    fv_output, fv_error = fv_process.communicate(fv_input)
+    if fv_process.returncode:
+        logging.error('Error #%s in FileVault setup: %s', fv_process.returncode, fv_error)
+    else:
+        logging.debug('FileVault setup: %s', fv_output)
 
 
 def get_serialnumber():
@@ -703,7 +738,8 @@ def migration_start(args):
     logging.info('Migrating client')
 
     if args.jamf:
-        jamf_helper('fs', heading='Directory Services User Migration', description='Starting migration...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Starting migration...', icon=args.iconpng)
     # Get current Directory Services node
     nodes = ds_get_nodes()
     nodes_count = len(nodes)
@@ -747,21 +783,23 @@ def migration_start(args):
     # Set Ethernet and Wi-Fi DNS if provided
     if args.dns:
         if args.jamf:
-            jamf_helper('fs', heading='Directory Services User Migration', description='Setting DNS...')
+            jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                        description='Setting DNS...', icon=args.iconpng)
         for network_service in get_network_services():
             set_dns_servers(network_service, args.dns)
 
     # Remove local groups
     if args.jamf:
-        jamf_helper('fs', heading='Directory Services User Migration',
-                    description='Removing users and groups...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Removing users and groups...', icon=args.iconpng)
     groups = remove_groups(user_list)
     # Remove local users
     remove_users(user_list)
 
     # Add target (new) Directory Service node
     if args.jamf:
-        jamf_helper('fs', heading='Directory Services User Migration', description='Adding new Directory Service')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Adding new Directory Service', icon=args.iconpng)
     if args.serial:
         computer = get_serialnumber()
     else:
@@ -792,18 +830,19 @@ def migration_start(args):
 
     # Remove source node
     if args.jamf:
-        jamf_helper('fs', heading='Directory Services User Migration',
-                    description='Removing old Directory Service...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Removing old Directory Service...', icon=args.iconpng)
     ds_remove_node(source_node['type'], source_node['domain'], args.source_username, args.source_password)
 
     # Migrate user homes (change ownership to target node)
     if args.jamf:
-        jamf_helper('fs', heading='Directory Services User Migration',
-                    description='Migrating user home permissions (this may take some time)...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Migrating user home permissions (this may take some time)...', icon=args.iconpng)
     migrate_homes(target_node, user_list)
 
     if args.jamf:
-        jamf_helper('fs', heading='Directory Services User Migration', description='Converting mobile accounts...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Converting mobile accounts...', icon=args.iconpng)
     # Create mobile users
     add_users(user_list)
     # Add groups to mobile users
@@ -813,15 +852,15 @@ def migration_start(args):
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
         if args.local_username and args.local_password:
-            logging.debug('Setting FileVault for: %s', args.user_username)
             fv_setup(args)
     if args.jamf:
         # Perform JAMF recon
-        jamf_helper('fs', heading='Directory Services User Migration', description='Updating JAMF inventory...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Updating JAMF inventory...', icon=args.iconpng)
         execute_command([jamf_binary, 'recon'])
         # Perform JAMF manage
-        jamf_helper('fs', heading='Directory Services User Migration',
-                    description='Enforcing JAMF management framework...')
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Enforcing JAMF management framework...', icon=args.iconpng)
         execute_command([jamf_binary, 'manage'])
 
 
@@ -835,7 +874,7 @@ Enter your password to continue.'''
         logging.debug('Getting password for: %s', username)
         # AppleScript dialog asking for user's password
         dialog_result = display_dialog(dialog_text, title='Directory Migration Assistant', buttons=['Cancel', 'OK'],
-                                       default=2, icon='caution', answer='', hidden=True)
+                                       default=2, icon=args.iconico, answer='', hidden=True)
         if not dialog_result:
             # User cancelled
             logging.info('Exiting. User cancelled.')
@@ -871,9 +910,10 @@ Enter your password to continue.'''
     setattr(args, 'interactive', True)
     setattr(args, 'headless', False)
     # Display dialog and wait.
-    display_dialog('You must now log out to complete the migration.\n'
-                   'Save any open documents, quit all applications and press Log Out to continue.',
-                   title='Directory Migration Assistant', buttons=['Log Out'], icon='caution')
+    jamf_helper(window_type='hud', title='VB&P Help Desk', heading='Directory Migration Assistant',
+                description='You must now log out to complete the migration.\n'
+                            'Save any open documents, quit all applications and press Log Out to continue.',
+                icon=args.iconpng, position='ur', button1='Log Out')
     # Launch the launchdaemon
     launchdaemon_launch()
 
@@ -883,13 +923,14 @@ def migration_headless(args):
     logging.info('Do migration headless')
 
     try:
-        # Wait for logout to complete
         if args.jamf:
-            jamf_helper('utility', title='Directory Services User Migration',
-                        description='User migration starting in 30 seconds.')
+            jamf_helper(window_type='hud', title='Directory Services User Migration',
+                        description='User migration starting in 30 seconds.', icon=args.iconpng)
+        # Wait for logout to complete
         time.sleep(30)
         # Unload loginwindow (force logout)
         loginwindow_unload()
+        time.sleep(5)
         # Perform migration
         migration_start(args)
     except SystemExit:
@@ -928,10 +969,10 @@ def main():
     if args.delete:
         # Remove script
         execute_command(['srm', sys.argv[0]])
-    logging.info('### EXIT ###')
     if args.headless:
         # Remove the launchdaemon
         launchdaemon_remove()
+    logging.info('### EXIT ###')
 
 
 # MAIN
