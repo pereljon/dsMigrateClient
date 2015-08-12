@@ -789,6 +789,9 @@ def migration_start(args):
     if logged_user in user_list:
         print 'This script must run from a local user account.'
 
+    # Get list of FileVault users
+    fv_users = fv_list()
+
     # Set Ethernet and Wi-Fi DNS if provided
     if args.dns:
         if args.jamf:
@@ -860,7 +863,8 @@ def migration_start(args):
     if args.user_username and args.user_password and args.user_username in user_list:
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
-        if args.local_username and args.local_password:
+        # Set up FileVault if user was in FileVault list and we have a local administrative username and password
+        if args.user_username in fv_users and args.local_username and args.local_password:
             fv_setup(args)
     if args.jamf:
         # Perform JAMF recon
