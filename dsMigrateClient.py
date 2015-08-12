@@ -431,6 +431,15 @@ def launchdaemon_remove():
     execute_command(['launchctl', 'remove', launchdaemon_name])
 
 
+def fv_list():
+    logging.info('Getting FileVault list')
+    result = execute_command(['fdesetup', 'list'])
+    if result == 'Error: FileVault is Off.':
+        return
+    find_result = re.findall(r'(.*),', result)
+    return find_result
+
+
 def fv_setup(args):
     logging.info('FileVault setup for: %s', args.user_username)
     fv_input = fv_plist
