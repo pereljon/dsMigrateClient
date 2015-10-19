@@ -165,6 +165,9 @@ def parse_arguments():
 def load_preferences(args):
     """Load preferences file and return as args namespace"""
     logging.info('Loading preferences: %s', args.file)
+    # Save preferences file value in case it gets over-writen
+    args_file_saved = args.file
+    # Begin parsing preferences file
     parser = SafeConfigParser()
     parser.read(args.file)
     # Parse sections
@@ -191,9 +194,9 @@ def load_preferences(args):
                 next_value = next_item[1]
             setattr(args, next_name, next_value)
     if args.delete:
-        # Remove settings file
-        logging.debug('Remove settings file: %s', args.file)
-        execute_command(['srm', args.file])
+        # Remove settings file if delete is set
+        logging.debug('Remove settings file: %s', args_file_saved)
+        execute_command(['srm', args_file_saved])
         setattr(args, 'file', None)
     return args
 
@@ -981,6 +984,7 @@ def main():
         migration_start(args)
     if args.delete:
         # Remove script
+        logging.info('Remove script')
         execute_command(['srm', sys.argv[0]])
     if args.headless:
         # Remove the launchdaemon
