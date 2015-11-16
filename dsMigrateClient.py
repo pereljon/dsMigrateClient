@@ -437,6 +437,7 @@ def launchdaemon_remove():
 def fv_list():
     logging.info('Getting FileVault list')
     result = execute_command(['fdesetup', 'list'])
+    logging.debug(result)
     if result == 'Error: FileVault is Off.':
         return
     find_result = re.findall(r'(.*),', result)
@@ -794,6 +795,7 @@ def migration_start(args):
 
     # Get list of FileVault users
     fv_users = fv_list()
+    logging.debug(fv_users)
 
     # Set Ethernet and Wi-Fi DNS if provided
     if args.dns:
