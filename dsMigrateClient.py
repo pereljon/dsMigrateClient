@@ -436,10 +436,11 @@ def launchdaemon_remove():
 
 def fv_list():
     logging.info('Getting FileVault list')
+    result = execute_command(['fdesetup', 'status'])
+    if result == 'FileVault is Off.':
+        return
     result = execute_command(['fdesetup', 'list'])
     logging.debug(result)
-    if result == 'Error: FileVault is Off.':
-        return
     find_result = re.findall(r'(.*),', result)
     return find_result
 
