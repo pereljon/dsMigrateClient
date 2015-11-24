@@ -165,6 +165,9 @@ def parse_arguments():
 def load_preferences(args):
     """Load preferences file and return as args namespace"""
     logging.info('Loading preferences: %s', args.file)
+    # Save preferences file value in case it gets over-writen
+    args_file_saved = args.file
+    # Begin parsing preferences file
     parser = SafeConfigParser()
     parser.read(args.file)
     # Parse sections
@@ -191,9 +194,9 @@ def load_preferences(args):
                 next_value = next_item[1]
             setattr(args, next_name, next_value)
     if args.delete:
-        # Remove settings file
-        logging.debug('Remove settings file: %s', args.file)
-        execute_command(['srm', args.file])
+        # Remove settings file if delete is set
+        logging.debug('Remove settings file: %s', args_file_saved)
+        execute_command(['srm', args_file_saved])
         setattr(args, 'file', None)
     return args
 
@@ -429,6 +432,17 @@ def launchdaemon_remove():
     execute_command(['srm', launchdaemon_path])
     # Remove LaunchDaemon
     execute_command(['launchctl', 'remove', launchdaemon_name])
+
+
+def fv_list():
+    logging.info('Getting FileVault list')
+    result = execute_command(['fdesetup', 'status'])
+    if result == 'FileVault is Off.':
+        return
+    result = execute_command(['fdesetup', 'list'])
+    logging.debug(result)
+    find_result = re.findall(r'(.*),', result)
+    return find_result
 
 
 def fv_setup(args):
@@ -780,6 +794,10 @@ def migration_start(args):
     if logged_user in user_list:
         print 'This script must run from a local user account.'
 
+    # Get list of FileVault users
+    fv_users = fv_list()
+    logging.debug(fv_users)
+
     # Set Ethernet and Wi-Fi DNS if provided
     if args.dns:
         if args.jamf:
@@ -851,7 +869,8 @@ def migration_start(args):
     if args.user_username and args.user_password and args.user_username in user_list:
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
-        if args.local_username and args.local_password:
+        # Set up FileVault if user was in FileVault list and we have a local administrative username and password
+        if args.user_username in fv_users and args.local_username and args.local_password:
             fv_setup(args)
     if args.jamf:
         # Perform JAMF recon
@@ -968,6 +987,7 @@ def main():
         migration_start(args)
     if args.delete:
         # Remove script
+        logging.info('Remove script')
         execute_command(['srm', sys.argv[0]])
     if args.headless:
         # Remove the launchdaemon
