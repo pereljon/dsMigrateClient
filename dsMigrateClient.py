@@ -378,20 +378,7 @@ def authorize_password(username, password, domain='.'):
         result = subprocess.check_output(command)
         logging.debug('Result: %s', result)
     except subprocess.CalledProcessError as error:
-        logging.debug('Authorization error: %s', error)
-        return False
-    else:
-        return True
-
-
-def logout():
-    logging.info('Logging out')
-    command = ['osascript', '-e', 'tell application "loginwindow" to «event aevtrlgo»']
-    try:
-        result = subprocess.check_output(command)
-        logging.debug('Result: %s', result)
-    except subprocess.CalledProcessError as error:
-        logging.debug('Logout error: %s', error)
+        logging.error('Authorization error: %s', error)
         return False
     else:
         return True
@@ -437,7 +424,8 @@ def launchdaemon_remove():
 def fv_list():
     logging.info('Getting FileVault list')
     result = execute_command(['fdesetup', 'status'])
-    if result == 'FileVault is Off.':
+    logging.debug(result)
+    if 'Off' in result:
         return
     result = execute_command(['fdesetup', 'list'])
     logging.debug(result)
@@ -953,7 +941,7 @@ def migration_headless(args):
         # Perform migration
         migration_start(args)
     except SystemExit:
-        logging.debug('System exit caught.')
+        logging.critical('System exit caught.')
         if args.jamf:
             jamf_helper('kill')
         # Reload loginwindow so users can log in
