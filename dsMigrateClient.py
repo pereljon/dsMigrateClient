@@ -270,7 +270,6 @@ def display_dialog(text, title=None, buttons=None, default=None, icon=None, answ
         elif os.path.exists(icon):
             icon = unix_to_macpath(icon)
             icon = ' with icon file "' + icon + '"'
-            print icon
         else:
             icon = ''
     else:
@@ -492,8 +491,10 @@ def ds_get_nodes():
     if not search_path:
         logging.critical('Search Path not found')
         sys.exit(1)
+    logging.debug(search_path)
     # Find array of nodes
     node_list = re.findall(r'\s*<string>(.+)</string>\n', search_path.group(0))
+    logging.debug(node_list)
     result = {}
     for node_path in node_list:
         if node_path.startswith('/Local/'):
@@ -525,6 +526,7 @@ def ds_get_nodes():
         result[node_type]['domain'] = node_domain
         result[node_type]['path'] = node_path
         result[node_type]['meta'] = node_meta
+    logging.debug(result)
     return result
 
 
@@ -668,10 +670,8 @@ def migrate_homes(node, user_list):
                 command = ['chown', '-R', user_uid[0], user_path]
                 execute_command(command)
             else:
-                print 'Path:', user_path, 'not found for user:', next_user
                 logging.error('Path: %s not found for user: %s', user_path, next_user)
         else:
-            print 'User:', next_user, 'not found in directory:', node
             logging.error('User: %s not found in directory: %s', next_user, node)
 
 
@@ -689,7 +689,7 @@ def remove_groups(user_list):
             for next_group in groups[next_user]:
                 command = ['dseditgroup', '-o', 'edit', '-d', next_user, '-t', 'user', next_group]
                 execute_command(command)
-    execute_command(['dscacheutil', '-flushcache'])
+    execute_command(['dsmemberutil', 'flushcache'])
     return groups
 
 
@@ -700,7 +700,7 @@ def add_groups(groups):
         for next_group in user_groups:
             command = ['dseditgroup', '-o', 'edit', '-a', next_user, '-t', 'user', next_group]
             execute_command(command)
-    execute_command(['dscacheutil', '-flushcache'])
+    execute_command(['dsmemberutil', 'flushcache'])
 
 
 def remove_users(user_list):
@@ -794,14 +794,6 @@ def migration_start(args):
         for network_service in get_network_services():
             set_dns_servers(network_service, args.dns)
 
-    # Remove local groups
-    if args.jamf:
-        jamf_helper(window_type='fs', heading='Directory Services User Migration',
-                    description='Removing users and groups...', icon=args.iconpng)
-    groups = remove_groups(user_list)
-    # Remove local users
-    remove_users(user_list)
-
     # Add target (new) Directory Service node
     if args.jamf:
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
@@ -833,6 +825,14 @@ def migration_start(args):
         sys.exit(1)
     if gVerbose:
         print 'Target node:', target_node
+
+    # Remove local groups
+    if args.jamf:
+        jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                    description='Removing users and groups...', icon=args.iconpng)
+    groups = remove_groups(user_list)
+    # Remove local users
+    remove_users(user_list)
 
     # Remove source node
     if args.jamf:
@@ -872,6 +872,24 @@ def migration_start(args):
 
 
 def migration_interactive(args):
+    """
+    :param args: args -
+    :return:
+    """
+    logging.info('Do migration interactive')
+
+    if args.jamf:
+        # Check to see if jamf policy is running
+        jamf_running = execute_command(['pgrep', '-f', 'jamf policy'])
+        if jamf_running is not None:
+            # Can't run while jamf policy is running
+            logging.debug('Exiting: jamf policy is running')
+            jamf_helper(window_type='utility', title='Directory Migration Assistant', heading='Try again later...',
+                        description='Your computer is currently running a management process and cannot perform the'
+                                    'migration at this time.\nPlease try running again in 5-10 minutes.',
+                        icon=args.iconpng, button1='Log Out')
+            sys.exit(0)
+
     # Get logged in user
     username = get_console_user()
     dialog_text = '''This assistant will migrate your user account to our new directory server.
@@ -916,20 +934,28 @@ Enter your password to continue.'''
     # Reset interactive & headless arguments back to actual values
     setattr(args, 'interactive', True)
     setattr(args, 'headless', False)
-    # Display dialog and wait.
-    jamf_helper(window_type='hud', title='VB&P Help Desk', heading='Directory Migration Assistant',
-                description='You must now log out to complete the migration.\n'
-                            'Save any open documents, quit all applications and press Log Out to continue.',
-                icon=args.iconpng, position='ur', button1='Log Out')
+    # TODO: Display AS dialog if not using jamf
+    # TODO: Remove this as users leave it running? Warn about this before?
+    if args.jamf:
+        # Display dialog and wait.
+        jamf_helper(window_type='hud', title='VB&P Help Desk', heading='Directory Migration Assistant',
+                    description='You must now log out to complete the migration.\n'
+                                'Save any open documents, quit all applications and press Log Out to continue.',
+                    icon=args.iconpng, button1='Log Out')
     # Launch the launchdaemon
     launchdaemon_launch()
 
 
 def migration_headless(args):
-    # Headless migration is launched by the LaunchDaemon
+    """ headless migration launched by the LaunchDaemon
+    :param args:
+    :return:
+    """
+
     logging.info('Do migration headless')
 
     try:
+        # TODO: Display AS dialog if not using jamf
         if args.jamf:
             jamf_helper(window_type='hud', title='Directory Services User Migration',
                         description='User migration starting in 30 seconds.', icon=args.iconpng)
@@ -940,46 +966,43 @@ def migration_headless(args):
         time.sleep(5)
         # Perform migration
         migration_start(args)
-    except SystemExit:
-        logging.critical('System exit caught.')
+    finally:
         if args.jamf:
             jamf_helper('kill')
         # Reload loginwindow so users can log in
         loginwindow_load()
-        # Remove the launchdaemon
-        launchdaemon_remove()
-        raise
-
-    if args.jamf:
-        jamf_helper('kill')
-    # Reload loginwindow so users can log in
-    loginwindow_load()
     # Finished migration
     logging.debug('Finished migration headless')
 
 
 def main():
-    # Parse arguments
+    """ main function
+    :return:
+    """
+
     args = parse_arguments()
-    if args.interactive:
-        # Do interactive migration, asking for user password, logging out, and running headless migration as daemon.
-        migration_interactive(args)
-    elif args.headless:
-        # Run migration headless, with user logged out and input from settings file.
-        migration_headless(args)
-    else:
-        # Do the migration, must be run as a local administrator
-        if os.getuid() != 0:
-            logging.critical('You must run this script with administrator privileges.')
-            sys.exit(1)
-        migration_start(args)
-    if args.delete:
-        # Remove script
-        logging.info('Remove script')
-        execute_command(['srm', sys.argv[0]])
-    if args.headless:
-        # Remove the launchdaemon
-        launchdaemon_remove()
+    try:
+        if args.interactive:
+            # Do interactive migration, asking for user password, logging out, and running headless migration as daemon.
+            migration_interactive(args)
+        elif args.headless:
+            # Run migration headless, with user logged out and input from settings file.
+            migration_headless(args)
+        else:
+            # Do the migration, must be run as a local administrator
+            if os.getuid() != 0:
+                logging.critical('You must run this script with administrator privileges.')
+                sys.exit(1)
+            migration_start(args)
+    finally:
+        logging.info('Cleaning up.')
+        if args.delete:
+            # Remove script
+            logging.info('Remove script')
+            execute_command(['srm', sys.argv[0]])
+        if args.headless:
+            # Remove the launchdaemon
+            launchdaemon_remove()
     logging.info('### EXIT ###')
 
 
