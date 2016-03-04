@@ -14,6 +14,7 @@ import argparse
 import getpass
 import types
 import time
+import random
 from datetime import datetime
 from ConfigParser import SafeConfigParser
 from SystemConfiguration import SCDynamicStoreCopyConsoleUser
@@ -96,7 +97,7 @@ def parse_arguments():
     parser.add_argument('-j', '--jamf', action='store_true',
                         help='display status using JAMF Helper.')
     parser.add_argument('--ldap', action='store_true',
-                        help='migrating to LDAP (OpenDirectory).')
+                        help='migrating to LDAP (OpenDirectory/OpenLDAP).')
     parser.add_argument('-p', dest='target_password', metavar='PASSWORD',
                         help='password for target (new) domain administrator.')
     parser.add_argument('-P', dest='source_password', metavar='PASSWORD',
@@ -107,10 +108,6 @@ def parse_arguments():
                         help='administrator user for target (new) domain.')
     parser.add_argument('-U', dest='source_username', metavar='USERNAME',
                         help='administrator user for source (old) domain.')
-    parser.add_argument('--local_username', metavar='USERNAME',
-                        help='local administrator user.')
-    parser.add_argument('--local_password', metavar='PASSWORD',
-                        help='local administrator password.')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose output.')
     parser.add_argument('target_domain', nargs='?', help='AD domain or LDAP server')
     args = parser.parse_args()
@@ -140,12 +137,22 @@ def parse_arguments():
     # Set verbose output if requested
     gVerbose = args.verbose
 
+    # Seed random generator
+    random.seed()
+
     # Set location of jamf binary
     if args.jamf:
-        jamf_binary = execute_command(['which', 'jamf']).strip()
+        jamf_binary = execute_command(['which', 'jamf'])
+        if jamf_binary is None:
+            jamf_binary = '/usr/local/bin/jamf'
+            logging.error('Could not find jamf binary with "which" command. Using: %s', jamf_binary)
+        else:
+            jamf_binary = jamf_binary.strip()
+            logging.debug('Found jamf_binary at: %s', jamf_binary)
         if not os.path.exists(jamf_binary):
             logging.critical('Could not find jamf binary at: %s', jamf_binary)
             sys.exit(1)
+
     logging.debug('Running as: %s', getpass.getuser())
 
     # Error-checking on arguments
@@ -434,11 +441,21 @@ def fv_list():
 
 def fv_setup(args):
     logging.info('FileVault setup for: %s', args.user_username)
+    if args.jamf:
+        # Temporary local admin account for setting up FileVault
+        local_username = "fvadmin" + datetime.now().strftime('%y%m%d%H%M')
+        local_password = str(random.getrandbits(64))
+        logging.debug('Creating temporary admin user: %s with password: %s', local_username, local_password )
+        execute_command([jamf_binary, 'createAccount', '-username', local_username, '-realname',
+                         'DSMigrate Temporary Admin', '-password', local_password, '-admin', '-hiddenUser'])
+        # TODO make DSCL way of creating temporary account
+    # Generate input plist for fdesetup
     fv_input = fv_plist
-    fv_input = fv_input.replace('local_username', args.local_username)
-    fv_input = fv_input.replace('local_password', args.local_password)
+    fv_input = fv_input.replace('local_username', local_username)
+    fv_input = fv_input.replace('local_password', local_password)
     fv_input = fv_input.replace('user_username', args.user_username)
     fv_input = fv_input.replace('user_password', args.user_password)
+    # Run fdesetup with input plist
     fv_process = subprocess.Popen(['/usr/bin/fdesetup', 'add', '-verbose', '-inputplist'], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     fv_output, fv_error = fv_process.communicate(fv_input)
@@ -446,6 +463,11 @@ def fv_setup(args):
         logging.error('Error #%s in FileVault setup: %s', fv_process.returncode, fv_error)
     else:
         logging.debug('FileVault setup: %s', fv_output)
+    if args.jamf:
+        # Delete temporary local admin account
+        logging.debug('Deleting temporary admin user: %s', local_username )
+        execute_command([jamf_binary, 'deleteAccount', '-username', local_username, '-deleteHomeDirectory'])
+        # TODO make DSCL way of deleting temporary account
 
 
 def get_serialnumber():
@@ -858,7 +880,8 @@ def migration_start(args):
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
         # Set up FileVault if user was in FileVault list and we have a local administrative username and password
-        if args.user_username in fv_users and args.local_username and args.local_password:
+        if args.user_username in fv_users and args.jamf:
+            # TODO This only works if using JAMF right now. Fix fv_setup to use DSCL if JAMF not available
             fv_setup(args)
     if args.jamf:
         # Perform JAMF recon
@@ -880,6 +903,7 @@ def migration_interactive(args):
 
     if args.jamf:
         # Check to see if jamf policy is running
+        # TODO Currently works if running from self service. Look into killing jamf policy processes that didn't spawn this process?
         jamf_running = execute_command(['pgrep', '-f', 'jamf policy'])
         if jamf_running is not None:
             # Can't run while jamf policy is running
