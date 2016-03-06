@@ -443,7 +443,7 @@ def fv_setup(args):
     logging.info('FileVault setup for: %s', args.user_username)
     if args.jamf:
         # Temporary local admin account for setting up FileVault
-        local_username = "fvadmin" + datetime.now().strftime('%y%m%d%H%M')
+        local_username = "dsmigrate_" + datetime.now().strftime('%y%m%d%H%M')
         local_password = str(random.getrandbits(64))
         logging.debug('Creating temporary admin user: %s with password: %s', local_username, local_password )
         execute_command([jamf_binary, 'createAccount', '-username', local_username, '-realname',
