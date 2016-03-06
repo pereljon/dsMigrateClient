@@ -23,7 +23,6 @@ from SystemConfiguration import SCDynamicStoreCopyConsoleUser
 tmp_path = '/tmp/'
 ini_file_path = tmp_path + 'dsMigrateClient.ini'
 program_path = tmp_path + 'dsMigrateClient.py'
-log_path = '/var/log/dsMigrateClient.log'
 launchdaemon_name = 'com.pereljon.dsMigrateClient'
 launchdaemon_path = '/Library/LaunchDaemons/' + launchdaemon_name + '.plist'
 launchdaemon_plist = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -72,7 +71,7 @@ def parse_arguments():
 
     # Parse arguments
     parser = argparse.ArgumentParser(
-        description='Migrate a mobile user from once Mac OS X Directory Service to another.')
+            description='Migrate a user account to a Mac OS X Directory Service.')
     parser.add_argument('--ad', action='store_true',
                         help='migrating to Active Directory.')
     parser.add_argument('--computer', metavar='COMPUTER_NAME',
@@ -98,6 +97,8 @@ def parse_arguments():
                         help='display status using JAMF Helper.')
     parser.add_argument('--ldap', action='store_true',
                         help='migrating to LDAP (OpenDirectory/OpenLDAP).')
+    parser.add_argument('--log', metavar='PATH',
+                        help='path to log directory (/var/log is default).')
     parser.add_argument('-p', dest='target_password', metavar='PASSWORD',
                         help='password for target (new) domain administrator.')
     parser.add_argument('-P', dest='source_password', metavar='PASSWORD',
@@ -111,6 +112,13 @@ def parse_arguments():
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose output.')
     parser.add_argument('target_domain', nargs='?', help='AD domain or LDAP server')
     args = parser.parse_args()
+
+    # TODO Change so log file location can be specified in .ini file
+    if args.log is None:
+        log_path = '/var/log/dsMigrateClient.log'
+    else:
+        # Log file directory specified in args
+        log_path = args.log + '/dsMigrateClient.log'
 
     # Set the logging level
     if args.debug:
@@ -256,6 +264,7 @@ def execute_command(command):
 def get_console_user():
     username = (SCDynamicStoreCopyConsoleUser(None, None, None) or [None])[0]
     username = [username, ''][username in [u'loginwindow', None, u'']]
+    logging.debug('Console user: %s', username)
     return username
 
 
@@ -445,9 +454,9 @@ def fv_setup(args):
         # Temporary local admin account for setting up FileVault
         local_username = "dsmigrate_" + datetime.now().strftime('%y%m%d%H%M')
         local_password = str(random.getrandbits(64))
-        logging.debug('Creating temporary admin user: %s with password: %s', local_username, local_password )
+        logging.debug('Creating temporary admin user: %s with password: %s', local_username, local_password)
         execute_command([jamf_binary, 'createAccount', '-username', local_username, '-realname',
-                         'DSMigrate Temporary Admin', '-password', local_password, '-admin', '-hiddenUser'])
+                         local_username, '-password', local_password, '-admin', '-hiddenUser'])
         # TODO make DSCL way of creating temporary account
     # Generate input plist for fdesetup
     fv_input = fv_plist
@@ -465,7 +474,7 @@ def fv_setup(args):
         logging.debug('FileVault setup: %s', fv_output)
     if args.jamf:
         # Delete temporary local admin account
-        logging.debug('Deleting temporary admin user: %s', local_username )
+        logging.debug('Deleting temporary admin user: %s', local_username)
         execute_command([jamf_binary, 'deleteAccount', '-username', local_username, '-deleteHomeDirectory'])
         # TODO make DSCL way of deleting temporary account
 
@@ -508,8 +517,8 @@ def ds_get_nodes():
         sys.exit(1)
     # Find CSPSearchPaths
     search_path = re.search(
-        r'\s*<key>dsAttrTypeStandard:CSPSearchPath</key>\n\s*<array>\n(?:\s*<string>.+</string>\n)+\s*</array>\n',
-        result_dscl)
+            r'\s*<key>dsAttrTypeStandard:CSPSearchPath</key>\n\s*<array>\n(?:\s*<string>.+</string>\n)+\s*</array>\n',
+            result_dscl)
     if not search_path:
         logging.critical('Search Path not found')
         sys.exit(1)
@@ -562,13 +571,13 @@ def ds_read_node(node, read_path, read_key):
     if read_key == 'UniqueID':
         # Create dictionary of GeneratedUID and UniqueID by RecordName
         search_results = re.search(
-            r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:UniqueID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
-            result)
+                r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:UniqueID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
+                result)
     elif read_key == 'PrimaryGroupID':
         # Find RecordName and UniqueID
         search_results = re.search(
-            r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:PrimaryGroupID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
-            result)
+                r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:PrimaryGroupID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
+                result)
     else:
         logging.critical('Unknown key: %s', read_key)
         sys.exit(1)
@@ -799,8 +808,7 @@ def migration_start(args):
 
     # Verify we are running from a local account (what if we are in non-local account but sudo'ed)
     logged_user = getpass.getuser()
-    # if gVerbose:
-    #     print 'Logged in user:', logged_user
+    logging.debug('Logged in user: %s', logged_user)
     if logged_user in user_list:
         print 'This script must run from a local user account.'
 
@@ -903,7 +911,7 @@ def migration_interactive(args):
 
     if args.jamf:
         # Check to see if jamf policy is running
-        # TODO Currently works if running from self service. Look into killing jamf policy processes that didn't spawn this process?
+        # TODO Currently works if running from self service. Just kill jamf policy?
         jamf_running = execute_command(['pgrep', '-f', 'jamf policy'])
         if jamf_running is not None:
             # Can't run while jamf policy is running
