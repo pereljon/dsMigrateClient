@@ -917,7 +917,7 @@ def migration_start(args):
 
     if args.jamf:
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
-                    description='Converting mobile accounts...', icon=args.iconpng)
+                    description='Converting accounts...', icon=args.iconpng)
     # Create mobile users
     add_users(user_list)
     # Add groups to mobile users
@@ -951,7 +951,7 @@ def migration_interactive(args):
 
     if args.jamf:
         # Check to see if jamf policy is running
-        # TODO Currently works if running from self service. Just kill jamf policy?
+        # TODO Remove this and make the migration_start script unload the jamf launchdaemons
         jamf_running = execute_command(['pgrep', '-f', 'jamf policy'])
         if jamf_running is not None:
             # Can't run while jamf policy is running
@@ -964,8 +964,10 @@ def migration_interactive(args):
 
     # Get logged in user, id, and home
     console_username = get_console_user()
+    # TODO look up userhome from DSCL instead of assuming its name/location
+    console_userhome = '/Users/' + console_username
     # console_user_id = execute_command(['id','-u',console_username]).strip()
-    console_userhome = execute_command(['printenv', 'HOME']).strip()
+    # console_userhome = execute_command(['printenv', 'HOME']).strip()
 
     if args.search_uri:
         # Search URI provided. Lookup username in target LDAP.
