@@ -60,8 +60,9 @@ dsMigrateClient.py -f /tmp/example.ini
 
 ## Assumptions
 1. Only one directory service connected at start (the source) or none (for local migration to directory)
-2. Users to migrate are local or mobile users
+2. Users to migrate are local or mobile users (not tested for network users)
 3. Migration is AD to OD, OD to AD, local to AD or local to OD.
+4. User documents are in /Users/ folder. Migration does not currently change permissions outside of each user's folder.
 
 ## Migration mode
 1. Get current DS nodes.
