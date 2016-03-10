@@ -13,6 +13,7 @@ import logging
 import argparse
 import getpass
 import types
+import shutil
 import time
 import random
 from datetime import datetime
@@ -46,9 +47,9 @@ fv_plist = '''<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
 <key>Username</key>
-<string>local_username</string>
+<string>admin_username</string>
 <key>Password</key>
-<string>local_password</string>
+<string>admin_password</string>
 <key>AdditionalUsers</key>
 <array>
     <dict>
@@ -71,9 +72,7 @@ def parse_arguments():
 
     # Parse arguments
     parser = argparse.ArgumentParser(
-            description='Migrate a user account to a Mac OS X Directory Service.')
-    parser.add_argument('--ad', action='store_true',
-                        help='migrating to Active Directory.')
+        description='Migrate a user account to a Mac OS X Directory Service.')
     parser.add_argument('--computer', metavar='COMPUTER_NAME',
                         help='computer name which will be set in new directory.')
     parser.add_argument('-d', '--debug', action='store_true',
@@ -95,8 +94,6 @@ def parse_arguments():
                         help='path to ICO icon (used in password dialog).')
     parser.add_argument('-j', '--jamf', action='store_true',
                         help='display status using JAMF Helper.')
-    parser.add_argument('--ldap', action='store_true',
-                        help='migrating to LDAP (OpenDirectory/OpenLDAP).')
     parser.add_argument('--log', metavar='PATH',
                         help='path to log directory (/var/log is default).')
     parser.add_argument('-p', dest='target_password', metavar='PASSWORD',
@@ -105,6 +102,18 @@ def parse_arguments():
                         help='password for source (old) domain administrator.')
     parser.add_argument('-s', '--serial', action='store_true',
                         help='use system serial number as computer name.')
+    parser.add_argument('--search_binddn', metavar='LDAP_DN',
+                        help='LDAP bind user DN on target domain (for searching for target username).')
+    parser.add_argument('--search_bindpass', metavar='PASSWORD',
+                        help='LDAP bind password on target domain.')
+    parser.add_argument('--search_uri', metavar='ATTR',
+                        help='LDAP URI to search for target username.')
+    parser.add_argument('--search_userattr', metavar='ATTR',
+                        help='LDAP attribute to search for target username.')
+    parser.add_argument('--search_userdn', metavar='LDAP_DN',
+                        help='LDAP DN on target domain to search for target username.')
+    parser.add_argument('-t', '--target_type', choices=['AD', 'LDAP'],
+                        help='target directory type.')
     parser.add_argument('-u', dest='target_username', metavar='USERNAME',
                         help='administrator user for target (new) domain.')
     parser.add_argument('-U', dest='source_username', metavar='USERNAME',
@@ -113,7 +122,7 @@ def parse_arguments():
     parser.add_argument('target_domain', nargs='?', help='AD domain or LDAP server')
     args = parser.parse_args()
 
-    # TODO Change so log file location can be specified in .ini file
+    # TODO Change so log file location can be specified in .ini file (right now only works from command line)
     if args.log is None:
         log_path = '/var/log/dsMigrateClient.log'
     else:
@@ -171,8 +180,10 @@ def parse_arguments():
         # Did NOT specify a domain
         logging.critical('Target domain must be specified.')
         sys.exit(1)
-    if (args.ad and args.ldap) or (not args.ad and not args.ldap):
-        logging.critical('Select either AD or LDAP for migration')
+    # TODO case insensitve target_type
+    if args.target_type not in ['AD', 'LDAP']:
+        # Did NOT specify a domain
+        logging.critical('Target domain must be ad or ldap.')
         sys.exit(1)
     return args
 
@@ -452,16 +463,16 @@ def fv_setup(args):
     logging.info('FileVault setup for: %s', args.user_username)
     if args.jamf:
         # Temporary local admin account for setting up FileVault
-        local_username = "dsmigrate_" + datetime.now().strftime('%y%m%d%H%M')
-        local_password = str(random.getrandbits(64))
-        logging.debug('Creating temporary admin user: %s with password: %s', local_username, local_password)
-        execute_command([jamf_binary, 'createAccount', '-username', local_username, '-realname',
-                         local_username, '-password', local_password, '-admin', '-hiddenUser'])
+        admin_username = "dsmigrate_" + datetime.now().strftime('%y%m%d%H%M')
+        admin_password = str(random.getrandbits(64))
+        logging.debug('Creating temporary admin user: %s with password: %s', admin_username, admin_password)
+        execute_command([jamf_binary, 'createAccount', '-username', admin_username, '-realname',
+                         admin_username, '-password', admin_password, '-admin', '-hiddenUser'])
         # TODO make DSCL way of creating temporary account
     # Generate input plist for fdesetup
     fv_input = fv_plist
-    fv_input = fv_input.replace('local_username', local_username)
-    fv_input = fv_input.replace('local_password', local_password)
+    fv_input = fv_input.replace('admin_username', admin_username)
+    fv_input = fv_input.replace('admin_password', admin_password)
     fv_input = fv_input.replace('user_username', args.user_username)
     fv_input = fv_input.replace('user_password', args.user_password)
     # Run fdesetup with input plist
@@ -474,8 +485,8 @@ def fv_setup(args):
         logging.debug('FileVault setup: %s', fv_output)
     if args.jamf:
         # Delete temporary local admin account
-        logging.debug('Deleting temporary admin user: %s', local_username)
-        execute_command([jamf_binary, 'deleteAccount', '-username', local_username, '-deleteHomeDirectory'])
+        logging.debug('Deleting temporary admin user: %s', admin_username)
+        execute_command([jamf_binary, 'deleteAccount', '-username', admin_username, '-deleteHomeDirectory'])
         # TODO make DSCL way of deleting temporary account
 
 
@@ -517,8 +528,8 @@ def ds_get_nodes():
         sys.exit(1)
     # Find CSPSearchPaths
     search_path = re.search(
-            r'\s*<key>dsAttrTypeStandard:CSPSearchPath</key>\n\s*<array>\n(?:\s*<string>.+</string>\n)+\s*</array>\n',
-            result_dscl)
+        r'\s*<key>dsAttrTypeStandard:CSPSearchPath</key>\n\s*<array>\n(?:\s*<string>.+</string>\n)+\s*</array>\n',
+        result_dscl)
     if not search_path:
         logging.critical('Search Path not found')
         sys.exit(1)
@@ -571,13 +582,13 @@ def ds_read_node(node, read_path, read_key):
     if read_key == 'UniqueID':
         # Create dictionary of GeneratedUID and UniqueID by RecordName
         search_results = re.search(
-                r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:UniqueID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
-                result)
+            r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:UniqueID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
+            result)
     elif read_key == 'PrimaryGroupID':
         # Find RecordName and UniqueID
         search_results = re.search(
-                r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:PrimaryGroupID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
-                result)
+            r'\s*<key>dsAttrTypeStandard:GeneratedUID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:PrimaryGroupID</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n\s*<key>dsAttrTypeStandard:RecordName</key>\n\s*<array>\n\s*<string>(.+)</string>\n\s*</array>\n',
+            result)
     else:
         logging.critical('Unknown key: %s', read_key)
         sys.exit(1)
@@ -767,44 +778,63 @@ def set_password(username, password, node, domain_username, domain_password):
     execute_command(command)
 
 
+def ldap_search(args, username):
+    logging.info('LDAP search')
+    result = execute_command(
+        ['ldapsearch', '-LLL', '-H', args.search_uri, '-D', args.search_binddn, '-w', args.search_bindpass,
+         '-b', args.search_userdn, args.search_userattr + "=" + username, "dn"])
+    if result:
+        match = re.search(r'dn:\s(.*)', result)
+        if match:
+            ldapDN = match.group(1)
+            logging.debug('LDAP search: %s found.', ldapDN)
+            return ldapDN
+    logging.debug('LDAP search: %s not found', username)
+    return None
+
+
+def ldap_auth(args, user_dn, user_password):
+    logging.info('LDAP auth')
+    result = execute_command(['ldapwhoami', '-H', args.search_uri, '-D', user_dn, '-w', user_password])
+    if result:
+        # Success: LDAP authentication
+        match = re.search(r'u:(.*)', result)
+        if match:
+            # Success: Matched
+            whoami = match.group(1)
+            logging.debug('LDAP auth: %s.', whoami)
+            return whoami
+    logging.debug('LDAP auth: failed')
+    return None
+
+
 def migration_start(args):
     logging.info('Migrating client')
 
     if args.jamf:
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
                     description='Starting migration...', icon=args.iconpng)
+
     # Get current Directory Services node
     nodes = ds_get_nodes()
     nodes_count = len(nodes)
-    if nodes_count < 2:
+    if nodes_count > 2:
         logging.critical('Unexpected number of nodes: %s', nodes_count)
         sys.exit(1)
-    elif nodes_count > 2:
-        if args.ad and 'AD' in nodes:
-            logging.critical('An Active Directory service already exists: %s', nodes['AD'])
-        elif args.ldap and 'LDAP' in nodes:
-            logging.critical('An LDAP service already exists: %s', nodes['LDAP'])
-        sys.exit(1)
-    elif (args.ad and 'AD' in nodes) or (args.ldap and 'LDAP' in nodes):
+    elif (args.target_type in nodes):
         logging.critical('Migrating to same directory type')
         sys.exit(1)
-    elif (args.ad and 'LDAP' not in nodes) or (args.ldap and 'AD' not in nodes):
-        logging.critical('Bad directory type to migrate')
-        sys.exit(1)
-    elif args.ad:
-        source_node = nodes['LDAP']
-        target_type = 'AD'
-    elif args.ldap:
-        source_node = nodes['AD']
-        target_type = 'LDAP'
+    elif nodes_count == 1:
+        logging.debug('Migrating from local account')
+        source_node = None
+        user_list = [args.local_username]
     else:
-        logging.critical('Unknown error condition: %s', nodes)
-        sys.exit(1)
-
-    # Get mobile users
-    user_list = get_mobile_users(source_node)
-    # if gVerbose:
-    #     print 'Users:', user_list
+        if args.target_type == 'AD':
+            source_node = nodes['LDAP']
+        elif args.target_type == 'LDAP':
+            source_node = nodes['AD']
+        # Get mobile users for source_node
+        user_list = get_mobile_users(source_node)
 
     # Verify we are running from a local account (what if we are in non-local account but sudo'ed)
     logged_user = getpass.getuser()
@@ -832,27 +862,22 @@ def migration_start(args):
         computer = get_serialnumber()
     else:
         computer = args.computer
-    ds_add_node(target_type, args.target_domain, computer, args.target_username, args.target_password)
+    ds_add_node(args.target_type, args.target_domain, computer, args.target_username, args.target_password)
 
+    # Save old node count
+    nodes_count_old = nodes_count
     # Read updated nodes
     nodes = ds_get_nodes()
     nodes_count = len(nodes)
-    if nodes_count < 3:
+    if nodes_count == nodes_count_old:
         logging.critical('Failed to add new directory service')
         sys.exit(1)
-    elif args.ad and 'AD' not in nodes:
-        logging.critical('Active Directory service not found')
+    elif args.target_type not in nodes:
+        logging.critical('Directory service not found: %s', args.target_type)
         sys.exit(1)
-    elif args.ldap and 'LDAP' not in nodes:
-        logging.critical('LDAP service not found')
-        sys.exit(1)
-    elif args.ad:
-        target_node = nodes['AD']
-    elif args.ldap:
-        target_node = nodes['LDAP']
     else:
-        logging.critical('Bad condition getting target node')
-        sys.exit(1)
+        target_node = nodes[args.target_type]
+
     if gVerbose:
         print 'Target node:', target_node
 
@@ -864,11 +889,25 @@ def migration_start(args):
     # Remove local users
     remove_users(user_list)
 
-    # Remove source node
-    if args.jamf:
-        jamf_helper(window_type='fs', heading='Directory Services User Migration',
-                    description='Removing old Directory Service...', icon=args.iconpng)
-    ds_remove_node(source_node['type'], source_node['domain'], args.source_username, args.source_password)
+    if source_node:
+        # Remove source node
+        if args.jamf:
+            jamf_helper(window_type='fs', heading='Directory Services User Migration',
+                        description='Removing old Directory Service...', icon=args.iconpng)
+        ds_remove_node(source_node['type'], source_node['domain'], args.source_username, args.source_password)
+
+    if args.user_username != args.local_username:
+        # Username change in new directory service
+        if args.local_username in fv_users:
+            # Update FileVault user list
+            fv_users.append(args.user_username)
+        # Update groups
+        groups[args.user_username] = groups.pop(args.local_username)
+        # Update user_list
+        user_list = [args.user_username]
+        # Rename user's home folder
+        userhome = '/Users/' + args.user_username
+        shutil.move(args.local_userhome, userhome)
 
     # Migrate user homes (change ownership to target node)
     if args.jamf:
@@ -891,6 +930,7 @@ def migration_start(args):
         if args.user_username in fv_users and args.jamf:
             # TODO This only works if using JAMF right now. Fix fv_setup to use DSCL if JAMF not available
             fv_setup(args)
+
     if args.jamf:
         # Perform JAMF recon
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
@@ -919,14 +959,44 @@ def migration_interactive(args):
             jamf_helper(window_type='utility', title='Directory Migration Assistant', heading='Try again later...',
                         description='Your computer is currently running a management process and cannot perform the'
                                     'migration at this time.\nPlease try running again in 5-10 minutes.',
-                        icon=args.iconpng, button1='Log Out')
+                        icon=args.iconpng, button1='OK')
             sys.exit(0)
 
-    # Get logged in user
-    username = get_console_user()
-    dialog_text = '''This assistant will migrate your user account to our new directory server.
+    # Get logged in user, id, and home
+    console_username = get_console_user()
+    # console_user_id = execute_command(['id','-u',console_username]).strip()
+    console_userhome = execute_command(['printenv', 'HOME']).strip()
 
-Enter your password to continue.'''
+    if args.search_uri:
+        # Search URI provided. Lookup username in target LDAP.
+        user_dn = ldap_search(args, console_username)
+        if not user_dn:
+            # Logged in (console) username not found in LDAP. Ask user for LDAP username.
+            logging.debug('Logged in username not found in LDAP.')
+            dialog_text = 'Enter your directory username to continue.'
+            dialog_result = display_dialog(dialog_text, title='Directory Migration Assistant', buttons=['Cancel', 'OK'],
+                                           default=2, icon=args.iconico, answer='')
+            if dialog_result and dialog_result['button'] == 'OK' and dialog_result['text']:
+                # Search for user entered username in LDAP
+                username = dialog_result['text']
+                user_dn = ldap_search(args, username)
+                if not user_dn:
+                    # User entered username not found in LDAP
+                    logging.debug('Exiting.')
+                    sys.exit(1)
+            else:
+                # User cancelled
+                logging.debug('Exiting.')
+                sys.exit(1)
+        else:
+            # No change in username (no need to rename home folder)
+            username = console_username
+    else:
+        # No change in username (no need to rename home folder)
+        # TODO Check that directory '/Users/'+username doesn't exist (would be issue when moving home dir)
+        username = console_username
+
+    dialog_text = 'Enter your password to continue.'
     while True:
         logging.debug('Getting password for: %s', username)
         # AppleScript dialog asking for user's password
@@ -939,7 +1009,12 @@ Enter your password to continue.'''
         elif dialog_result['button'] == 'OK' and dialog_result['text']:
             # User pressed OK button and typed a password
             # Verify password is correct
-            authorized_user = authorize_password(username, dialog_result['text'])
+            if args.search_uri:
+                # Do LDAP authentication of LDAP username with user provided password
+                authorized_user = ldap_auth(args, user_dn, dialog_result['text'])
+            else:
+                # Do dscl authentcation
+                authorized_user = authorize_password(username, dialog_result['text'])
             if authorized_user:
                 # Password is correct
                 logging.debug('User authorized.')
@@ -955,6 +1030,9 @@ Enter your password to continue.'''
             sys.exit(1)
         dialog_text = '''Your password was incorrect. Please try again'''
 
+    # Add local username and home directory to arguments
+    setattr(args, 'local_username', console_username)
+    setattr(args, 'local_userhome', console_userhome)
     # Add user's username and password in arguments
     setattr(args, 'user_username', username)
     setattr(args, 'user_password', password)
