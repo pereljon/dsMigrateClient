@@ -55,6 +55,8 @@ optional arguments:
   -U USERNAME           administrator user for source (old) domain.
   -v, --verbose         verbose output.
 
+## Running with arguments in a settings file 
+dsMigrateClient.py -f /tmp/example.ini
 
 ## Assumptions
 1. Only one directory service connected at start (the source) or none (for local migration to directory)
