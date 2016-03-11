@@ -940,6 +940,9 @@ def migration_start(args):
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
                     description='Enforcing JAMF management framework...', icon=args.iconpng)
         execute_command([jamf_binary, 'manage'])
+    # TODO Reset Spotlight indexing
+    # TODO Delete /var/folders/*
+    # TODO Delete keychain folder for user GUID
 
 
 def migration_interactive(args):
@@ -1082,6 +1085,7 @@ def migration_headless(args):
         if args.jamf:
             jamf_helper('kill')
         # Reload loginwindow so users can log in
+        # TODO change load of loginwindow to reboot
         loginwindow_load()
     # Finished migration
     logging.debug('Finished migration headless')
