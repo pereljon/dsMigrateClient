@@ -475,6 +475,7 @@ def fv_setup(args):
     fv_input = fv_input.replace('admin_password', admin_password)
     fv_input = fv_input.replace('user_username', args.user_username)
     fv_input = fv_input.replace('user_password', args.user_password)
+    logging.debug ( fv_input )
     # Run fdesetup with input plist
     fv_process = subprocess.Popen(['/usr/bin/fdesetup', 'add', '-verbose', '-inputplist'], stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -814,7 +815,8 @@ def migration_start(args):
     if args.jamf:
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
                     description='Starting migration...', icon=args.iconpng)
-
+        # TODO Unload /Library/LaunchDaemons/*.caspercheck.plist and reload at end
+        # TODO Unload /Library/Launch*/com.jamfsoftware.*.plist and reload at end
     # Get current Directory Services node
     nodes = ds_get_nodes()
     nodes_count = len(nodes)
