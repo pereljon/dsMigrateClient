@@ -53,10 +53,17 @@ optional arguments:
                         target directory type.
   -u USERNAME           administrator user for target (new) domain.
   -U USERNAME           administrator user for source (old) domain.
+  --local_username USERNAME
+                        local administrator user.
+  --local_password PASSWORD
+                        local administrator password.
   -v, --verbose         verbose output.
 
-## Running with arguments in a settings file 
-dsMigrateClient.py -f /tmp/example.ini
+## Running with arguments in a settings file
+/tmp/dsMigrateClient.py -f /tmp/example.ini
+
+## Running from Casper Self Service
+To run the migration, create a Casper package with the script, the ini file, and the icon files for the dialogs and upload it to the JSS. Then create a policy which installs the package and executes the script with the ini file as an argument ( /tmp/dsMigrateClient.py -f /tmp/exampleLocal.ini ) and allow it to be run from Self Service. Users can then initiate the migration from the Self Service application.
 
 ## Assumptions
 1. Only one directory service connected at start (the source) or none (for local migration to directory)
