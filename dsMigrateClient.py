@@ -118,6 +118,10 @@ def parse_arguments():
                         help='administrator user for target (new) domain.')
     parser.add_argument('-U', dest='source_username', metavar='USERNAME',
                         help='administrator user for source (old) domain.')
+    parser.add_argument('--local_username', metavar='USERNAME',
+                        help='local administrator user.')
+    parser.add_argument('--local_password', metavar='PASSWORD',
+                        help='local administrator password.')
     parser.add_argument('-v', '--verbose', action='store_true', help='verbose output.')
     parser.add_argument('target_domain', nargs='?', help='AD domain or LDAP server')
     args = parser.parse_args()
@@ -461,18 +465,10 @@ def fv_list():
 
 def fv_setup(args):
     logging.info('FileVault setup for: %s', args.user_username)
-    if args.jamf:
-        # Temporary local admin account for setting up FileVault
-        admin_username = "dsmigrate_" + datetime.now().strftime('%y%m%d%H%M')
-        admin_password = str(random.getrandbits(64))
-        logging.debug('Creating temporary admin user: %s with password: %s', admin_username, admin_password)
-        execute_command([jamf_binary, 'createAccount', '-username', admin_username, '-realname',
-                         admin_username, '-password', admin_password, '-admin', '-hiddenUser'])
-        # TODO make DSCL way of creating temporary account
     # Generate input plist for fdesetup
     fv_input = fv_plist
-    fv_input = fv_input.replace('admin_username', admin_username)
-    fv_input = fv_input.replace('admin_password', admin_password)
+    fv_input = fv_input.replace('admin_username', args.local_username)
+    fv_input = fv_input.replace('admin_password', args.local_password)
     fv_input = fv_input.replace('user_username', args.user_username)
     fv_input = fv_input.replace('user_password', args.user_password)
     # Run fdesetup with input plist
@@ -483,11 +479,6 @@ def fv_setup(args):
         logging.error('Error #%s in FileVault setup: %s', fv_process.returncode, fv_error)
     else:
         logging.debug('FileVault setup: %s', fv_output)
-    if args.jamf:
-        # Delete temporary local admin account
-        logging.debug('Deleting temporary admin user: %s', admin_username)
-        execute_command([jamf_binary, 'deleteAccount', '-username', admin_username, '-deleteHomeDirectory'])
-        # TODO make DSCL way of deleting temporary account
 
 
 def get_serialnumber():
@@ -814,7 +805,8 @@ def migration_start(args):
     if args.jamf:
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
                     description='Starting migration...', icon=args.iconpng)
-
+        # TODO Unload /Library/LaunchDaemons/*.caspercheck.plist and reload at end
+        # TODO Unload /Library/Launch*/com.jamfsoftware.*.plist and reload at end
     # Get current Directory Services node
     nodes = ds_get_nodes()
     nodes_count = len(nodes)
@@ -927,8 +919,7 @@ def migration_start(args):
         logging.debug('Setting password for: %s', args.user_username)
         set_password(args.user_username, args.user_password, target_node, args.target_username, args.target_password)
         # Set up FileVault if user was in FileVault list and we have a local administrative username and password
-        if args.user_username in fv_users and args.jamf:
-            # TODO This only works if using JAMF right now. Fix fv_setup to use DSCL if JAMF not available
+        if args.user_username in fv_users and args.local_username and args.local_password:
             fv_setup(args)
 
     if args.jamf:
@@ -940,6 +931,9 @@ def migration_start(args):
         jamf_helper(window_type='fs', heading='Directory Services User Migration',
                     description='Enforcing JAMF management framework...', icon=args.iconpng)
         execute_command([jamf_binary, 'manage'])
+    # TODO Reset Spotlight indexing
+    # TODO Delete /var/folders/*
+    # TODO Delete keychain folder for user GUID
 
 
 def migration_interactive(args):
@@ -1082,6 +1076,7 @@ def migration_headless(args):
         if args.jamf:
             jamf_helper('kill')
         # Reload loginwindow so users can log in
+        # TODO change load of loginwindow to reboot
         loginwindow_load()
     # Finished migration
     logging.debug('Finished migration headless')
